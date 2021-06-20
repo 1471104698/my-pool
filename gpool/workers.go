@@ -7,9 +7,8 @@ import (
 )
 
 var (
-	fullErr       = fmt.Errorf("queue is full")
-	emptyErr      = fmt.Errorf("queue is empty")
-	defaultLocker = &sync.Mutex{}
+	fullErr  = fmt.Errorf("queue is full")
+	emptyErr = fmt.Errorf("queue is empty")
 )
 
 const (
@@ -34,13 +33,14 @@ func NewWorkers(cap int32) (ws *workers) {
 	if cap <= 0 {
 		cap = defaultWorkersCap
 	}
+	lock := newLocker()
 	return &workers{
 		cap:  cap,
 		len:  0,
-		lock: defaultLocker,
+		lock: lock,
 		// producer 和 consumer 同一把锁
-		producer: sync.NewCond(defaultLocker),
-		consumer: sync.NewCond(defaultLocker),
+		producer: sync.NewCond(lock),
+		consumer: sync.NewCond(lock),
 		workers:  make([]*worker, 0, cap),
 	}
 }

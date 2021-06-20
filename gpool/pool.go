@@ -27,11 +27,14 @@ const (
 type pool struct {
 	cap    int32
 	len    int32
+	free   int32
 	status int32
 
 	cond *sync.Cond
 
-	workers *workers
+	lock sync.Locker
+
+	workers *workers // 这里实际上应该将 workers 做成一个接口，这样可以接收不同实现的任务队列
 
 	opts *Options
 }
@@ -42,16 +45,17 @@ func NewPool(cap int32, opts ...Option) *pool {
 		cap:     cap,
 		len:     0,
 		status:  Init,
-		cond:    sync.NewCond(&sync.Mutex{}),
+		lock:    newLocker(),
+		cond:    sync.NewCond(newLocker()),
 		opts:    setOptions(opts),
-		workers: NewWorkers(-1),
+		workers: NewWorkers(cap),
 	}
-	p.setInit()
+	p.init()
 	return p
 }
 
-// setInit
-func (p *pool) setInit() {
+// init
+func (p *pool) init() {
 	if p.cap < 0 {
 		p.cap = DefaultCap
 	}
@@ -111,10 +115,22 @@ func (p *pool) Cap() int32 {
 	return atomic.LoadInt32(&p.cap)
 }
 
+// addWorker
+func (p *pool) addWorker(w *worker) {
+	p.workers.Put(w)
+}
+
 // getWorker
 func (p *pool) getWorker() (w *worker) {
 	if p.IsClosed() {
 		return nil
 	}
+	// 获取 workder 的逻辑，比如目前的 worker 数是否已经超过了容量，获取成功了怎么做，获取失败了怎么做
+
 	return w
+}
+
+// newLocker
+func newLocker() sync.Locker {
+	return &sync.Mutex{}
 }

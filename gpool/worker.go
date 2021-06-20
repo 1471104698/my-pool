@@ -1,9 +1,36 @@
 package gpool
 
-import "sync"
-
 // worker
 type worker struct {
-	cond *sync.Cond
-	task interface{}	// 如何传入待定
+	p    *pool
+	task chan func()
+}
+
+// NewWorker
+func NewWorker(p *pool) *worker {
+	return &worker{
+		p:    p,
+		task: make(chan func(), 1),
+	}
+}
+
+// run 执行任务
+func (w *worker) run() {
+	// 开启一个 goroutine 执行任务
+	go func() {
+		// 阻塞接收任务
+		for t := range w.task {
+			if t == nil {
+				continue
+			}
+			// 如果 pool 已经关闭，那么没必要继续执行了
+			if w.p.IsClosed() {
+				return
+			}
+			// 执行任务
+			t()
+			// 入队 workers，继续等待任务调度
+			w.p.addWorker(w)
+		}
+	}()
 }
