@@ -6,22 +6,20 @@ import (
 )
 
 // RejectHandler
-type RejectHandler = func(task func())
+type RejectHandler = func(task func()) (err error)
 
 // PanicHandler
-type PanicHandler = func()
+type PanicHandler = func(err error)
 
 var (
 	// 默认的 Panic 处理策略
-	defaultPanicHandler = func() {
-		if err := recover(); err != nil {
-			fmt.Printf("err: %v\n", err)
-		}
+	defaultPanicHandler = func(err error) {
+		fmt.Printf("发生错误 err: %v\n", err)
 	}
 	// 默认的拒绝策略
-	defaultRejectHandler = func(task func()) {
-		fmt.Printf("任务被丢弃\n")
-		return
+	defaultRejectHandler = func(task func()) (err error) {
+		fmt.Printf("任务被丢弃, tast: %#v\n", task)
+		return fmt.Errorf("任务被丢弃")
 	}
 
 	// 默认的日志输出
@@ -41,6 +39,7 @@ type Options struct {
 	panicHandler PanicHandler
 	// 拒绝策略
 	rejectHandler RejectHandler
+
 	// 日志输出
 	logger *log.Logger
 }

@@ -96,6 +96,17 @@ func (p *pool) Submit(task taskFunc) error {
 		return poolClosedErr
 	}
 
+	// 对任务执行过程中发生的 panic 处理
+	defer func() {
+		if err := recover(); err != nil {
+			if h := p.opts.panicHandler; h != nil {
+				h(err.(error))
+			} else {
+				panic(err)
+			}
+		}
+	}()
+
 	// 获取 worker 来执行任务
 	w := p.getWorker(p.isCoreFull)
 	// worker 数量达到了 core
@@ -105,6 +116,10 @@ func (p *pool) Submit(task taskFunc) error {
 			// 任务队列已满，那么创建 非 core worker
 			w = p.getWorker(p.isMaxFull)
 			if w == nil {
+				// 执行拒绝策略
+				if r := p.opts.rejectHandler; r != nil {
+					return r(task)
+				}
 				return poolFullErr
 			}
 		}
