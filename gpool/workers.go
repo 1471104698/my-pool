@@ -32,7 +32,7 @@ type workers struct {
 // NewWorkers
 func NewWorkers(cap int32) (ws *workers) {
 	if cap <= 0 {
-		cap = DefaultCap
+		cap = defaultWorkersCap
 	}
 	return &workers{
 		cap:  cap,
