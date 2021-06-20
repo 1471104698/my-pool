@@ -23,6 +23,11 @@ const (
 	Closed
 )
 
+var (
+	poolClosedErr = fmt.Errorf("pool is closed")
+	poolFullErr   = fmt.Errorf("pool is full")
+)
+
 // pool
 type pool struct {
 	cap    int32
@@ -74,18 +79,19 @@ func (p *pool) init() {
 }
 
 // Submit
-func (p *pool) Submit(task interface{}) (err error) {
+func (p *pool) Submit(task func()) error {
 	// 接收到一个任务，此时应该怎么做？
 	// 判断 pool 是否已经关闭
 	if p.IsClosed() {
-		return fmt.Errorf("pool is closed")
+		return poolClosedErr
 	}
 
 	// 获取 worker 来执行任务
 	var w *worker
-	if w = p.getWorker(); w != nil {
-
+	if w = p.getWorker(); w == nil {
+		return poolFullErr
 	}
+	w.task <- task
 	return nil
 }
 
@@ -100,9 +106,9 @@ func (p *pool) IsClosed() bool {
 	return atomic.LoadInt32(&p.status) == Closed
 }
 
-// setStatus
-func (p *pool) setStatus(status int32) {
-	atomic.StoreInt32(&p.status, status)
+// IsFull
+func (p *pool) IsFull() bool {
+	return p.Cap() == p.Len()
 }
 
 // Len
@@ -115,22 +121,51 @@ func (p *pool) Cap() int32 {
 	return atomic.LoadInt32(&p.cap)
 }
 
+// ---------------------------------------------------------------------------------------------------
+
+// newLocker
+func newLocker() sync.Locker {
+	return &sync.Mutex{}
+}
+
+// incrLen
+func (p *pool) incrLen(i int32) {
+	atomic.AddInt32(&p.len, i)
+}
+
+// setStatus
+func (p *pool) setStatus(status int32) {
+	atomic.StoreInt32(&p.status, status)
+}
+
 // addWorker
 func (p *pool) addWorker(w *worker) {
 	p.workers.Put(w)
 }
 
 // getWorker
+// 获取 workder 的逻辑，比如目前的 worker 数是否已经超过了容量，获取成功了怎么做，获取失败了怎么做
 func (p *pool) getWorker() (w *worker) {
 	if p.IsClosed() {
 		return nil
 	}
-	// 获取 workder 的逻辑，比如目前的 worker 数是否已经超过了容量，获取成功了怎么做，获取失败了怎么做
+	// 从 workers 中获取一个可用的 worker
+	// 这里由 workers 自己保证并发安全
+	w, _ = p.workers.Remove()
+	if w != nil {
+		return w
+	}
+	// 无需加锁，利用 atomic 实现原子性即可
 
+	// 判断已经存在的 worker 数是否已经到达 cap
+	if p.IsFull() {
+		return nil
+	}
+	// 创建一个新的 worker
+	w = NewWorker(p)
+	// 让 worker 先开始运行等待任务
+	w.run()
+
+	// 这里不能将 worker 入队，因为 workers 内部的 worker 存储的是空闲等待任务的，而这里新创建的是需要去执行任务的
 	return w
-}
-
-// newLocker
-func newLocker() sync.Locker {
-	return &sync.Mutex{}
 }

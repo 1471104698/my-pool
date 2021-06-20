@@ -16,6 +16,8 @@ func NewWorker(p *pool) *worker {
 
 // run 执行任务
 func (w *worker) run() {
+	// len+1，表示当前存在的 worker 数+1
+	w.p.incrLen(1)
 	// 开启一个 goroutine 执行任务
 	go func() {
 		// 阻塞接收任务
