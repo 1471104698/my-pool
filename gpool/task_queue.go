@@ -92,3 +92,15 @@ func (q *taskQueue) isFull() bool {
 func (q *taskQueue) isEmpty() bool {
 	return q.len == 0
 }
+
+// Reset
+func (q *taskQueue) Reset() {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	for i := 0; i < int(q.len); i++ {
+		q.tasks[i] = nil
+	}
+	q.len = 0
+	q.head = 0
+	q.tail = 0
+}

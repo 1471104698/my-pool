@@ -145,3 +145,16 @@ func (ws *workers) IsFull() bool {
 func (ws *workers) IsEmpty() bool {
 	return atomic.LoadInt32(&ws.len) == 0
 }
+
+// Reset
+func (ws *workers) Reset() {
+	for k, w := range ws.workers {
+		w.task <- nil
+		w.setStatus(WorkerStop)
+		ws.workers[k] = nil
+	}
+	ws.len = 0
+	ws.producer.Broadcast()
+	ws.consumer.Broadcast()
+	ws.workers = ws.workers[:0]
+}

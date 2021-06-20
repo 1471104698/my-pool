@@ -18,7 +18,7 @@ var (
 	}
 	// 默认的拒绝策略
 	defaultRejectHandler = func(task func()) (err error) {
-		fmt.Printf("任务被丢弃, tast: %#v\n", task)
+		//fmt.Printf("任务被丢弃, tast: %#v\n", task)
 		return fmt.Errorf("任务被丢弃")
 	}
 

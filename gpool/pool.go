@@ -117,9 +117,9 @@ func (p *pool) Submit(task taskFunc) error {
 			w = p.getWorker(p.isMaxFull)
 			if w == nil {
 				// 执行拒绝策略
-				//if r := p.opts.rejectHandler; r != nil {
-				//	return r(task)
-				//}
+				if r := p.opts.rejectHandler; r != nil {
+					return r(task)
+				}
 				return poolFullErr
 			}
 		}
@@ -155,6 +155,15 @@ func (p *pool) MaxSize() int32 {
 // CoreSize
 func (p *pool) CoreSize() int32 {
 	return p.coreSize
+}
+
+// Close
+func (p *pool) Close() {
+	// 扫描所有的 workers 中所有的 worker，对于不在这里的 worker 在执行完任务后会自动退出
+	p.setStatus(Closed)
+	p.workers.Reset()
+	// 清空任务队列的任务
+	p.taskQueue.Reset()
 }
 
 // ---------------------------------------------------------------------------------------------------
