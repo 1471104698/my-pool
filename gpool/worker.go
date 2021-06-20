@@ -1,7 +1,6 @@
 package gpool
 
 import (
-	"sync"
 	"sync/atomic"
 )
 
@@ -18,8 +17,6 @@ type worker struct {
 	task     taskFunc
 	status   int32
 	freeTime int32
-
-	lock sync.Locker
 }
 
 // NewWorker

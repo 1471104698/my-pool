@@ -234,6 +234,7 @@ func (p *pool) getWorker(isFull isFullFunc, task taskFunc) (w *worker) {
 
 	// 创建一个新的 worker
 	w = NewWorker(p, task)
+	p.addWorker(w)
 	// 让 worker 先开始运行等待任务
 	w.run()
 	// runningSize+1，表示当前存在的 worker 数+1

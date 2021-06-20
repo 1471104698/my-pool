@@ -93,7 +93,7 @@ func (q *taskQueue) enqueue(task taskFunc) bool {
 	q.len++
 	select {
 	case q.ch <- struct{}{}:
-	case <-time.After(2 * time.Millisecond):
+	case <-time.After(time.Millisecond):
 	}
 	return true
 }

@@ -23,7 +23,7 @@ var p = gpool.NewPool(5, 20, 2)
 
 func main() {
 
-	times := 3000
+	times := 2000
 	test(times)
 }
 
