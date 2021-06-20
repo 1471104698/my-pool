@@ -13,7 +13,7 @@ var (
 
 const (
 	// defaultWorkersCap
-	defaultWorkersCap = 10
+	defaultWorkersCap = 100
 )
 
 // workers

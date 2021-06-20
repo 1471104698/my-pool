@@ -6,7 +6,7 @@ import (
 )
 
 // RejectHandler
-type RejectHandler = func(task interface{})
+type RejectHandler = func(task func())
 
 // PanicHandler
 type PanicHandler = func()
@@ -19,8 +19,8 @@ var (
 		}
 	}
 	// 默认的拒绝策略
-	defaultRejectHandler = func(task interface{}) {
-		fmt.Printf("任务被丢弃, task: %+v\n", task)
+	defaultRejectHandler = func(task func()) {
+		fmt.Printf("任务被丢弃\n")
 		return
 	}
 
