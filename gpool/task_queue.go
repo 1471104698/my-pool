@@ -2,11 +2,12 @@ package gpool
 
 import (
 	"sync"
+	"time"
 )
 
 const (
 	// defaultTaskQueueCap
-	defaultTaskQueueCap = 1000
+	defaultTaskQueueCap = 10000
 )
 
 // taskFunc
@@ -22,6 +23,8 @@ type taskQueue struct {
 	tail int32
 	lock sync.Locker
 
+	ch chan struct{}
+
 	tasks []taskFunc
 }
 
@@ -36,6 +39,7 @@ func NewTaskQueue(cap int32) *taskQueue {
 		head:  0,
 		tail:  0,
 		lock:  newLocker(),
+		ch:    make(chan struct{}),
 		tasks: make([]taskFunc, cap, cap),
 	}
 }
@@ -60,6 +64,25 @@ func (q *taskQueue) Poll() (task taskFunc) {
 	return task
 }
 
+// PollWithTimeout
+func (q *taskQueue) PollWithTimeout(timeout int32) (task taskFunc) {
+	endTime := time.Now().Add(time.Duration(timeout) * time.Second)
+	for {
+		if task = q.Poll(); task != nil {
+			return task
+		}
+		remaining := endTime.Sub(time.Now())
+		if remaining < 0 {
+			break
+		}
+		select {
+		case <-q.ch:
+		case <-time.After(remaining):
+		}
+	}
+	return nil
+}
+
 // enqueue 入队，调用该方法时必须获取锁
 func (q *taskQueue) enqueue(task taskFunc) bool {
 	if q.isFull() {
@@ -68,6 +91,10 @@ func (q *taskQueue) enqueue(task taskFunc) bool {
 	q.tasks[q.tail] = task
 	q.tail = (q.tail + 1) % q.cap
 	q.len++
+	select {
+	case q.ch <- struct{}{}:
+	case <-time.After(2 * time.Millisecond):
+	}
 	return true
 }
 
@@ -93,8 +120,8 @@ func (q *taskQueue) isEmpty() bool {
 	return q.len == 0
 }
 
-// Reset
-func (q *taskQueue) Reset() {
+// reset
+func (q *taskQueue) reset() {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 	for i := 0; i < int(q.len); i++ {

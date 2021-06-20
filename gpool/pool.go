@@ -37,6 +37,7 @@ type pool struct {
 	coreSize    int32
 	runningSize int32
 	status      int32
+	freeTime    int32
 
 	lock sync.Locker
 	cond *sync.Cond
@@ -49,10 +50,11 @@ type pool struct {
 }
 
 // NewPool
-func NewPool(core, max int32, opts ...Option) *pool {
+func NewPool(core, max, freeTime int32, opts ...Option) *pool {
 	p := &pool{
 		maxSize:     max,
 		coreSize:    core,
+		freeTime:    freeTime,
 		runningSize: 0,
 		status:      Init,
 		lock:        newLocker(),
@@ -88,7 +90,7 @@ func (p *pool) init() {
 	}
 }
 
-// Submit
+// Submit 任务提交
 func (p *pool) Submit(task taskFunc) error {
 	// 接收到一个任务，此时应该怎么做？
 	// 判断 pool 是否已经关闭
@@ -108,13 +110,13 @@ func (p *pool) Submit(task taskFunc) error {
 	}()
 
 	// 获取 worker 来执行任务
-	w := p.getWorker(p.isCoreFull)
+	w := p.getWorker(p.isCoreFull, task)
 	// worker 数量达到了 core
 	if w == nil {
 		// 将任务放到任务队列中
 		if !p.enTaskQueue(task) {
 			// 任务队列已满，那么创建 非 core worker
-			w = p.getWorker(p.isMaxFull)
+			w = p.getWorker(p.isMaxFull, task)
 			if w == nil {
 				// 执行拒绝策略
 				if r := p.opts.rejectHandler; r != nil {
@@ -126,8 +128,9 @@ func (p *pool) Submit(task taskFunc) error {
 		return nil
 	}
 
+	// 这里有个问题，当塞任务的时候可能 worker 已经结束运行了，导致 deadlock
 	// 这里拿到的 w 已经运行了 run()，直接塞任务即可
-	w.task <- task
+	//w.task <- task
 	return nil
 }
 
@@ -159,11 +162,14 @@ func (p *pool) CoreSize() int32 {
 
 // Close
 func (p *pool) Close() {
+	// 获取锁，使得其他 goroutine 无法创建新的 worker
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	// 扫描所有的 workers 中所有的 worker，对于不在这里的 worker 在执行完任务后会自动退出
 	p.setStatus(Closed)
-	p.workers.Reset()
+	p.workers.reset()
 	// 清空任务队列的任务
-	p.taskQueue.Reset()
+	p.taskQueue.reset()
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -195,18 +201,20 @@ func (p *pool) setStatus(status int32) {
 
 // addWorker
 func (p *pool) addWorker(w *worker) {
+	if p.IsClosed() || w.IsStop() {
+		return
+	}
 	p.workers.Put(w)
 }
 
 // getWorker
 // 获取 workder 的逻辑，比如目前的 worker 数是否已经超过了容量，获取成功了怎么做，获取失败了怎么做
-func (p *pool) getWorker(isFull isFullFunc) (w *worker) {
-	// 从 workers 中获取一个可用的 worker
+func (p *pool) getWorker(isFull isFullFunc, task taskFunc) (w *worker) {
 	// 这里由 workers 自己保证并发安全
-	w, _ = p.workers.Remove()
-	if w != nil {
-		return w
-	}
+	//w, _ = p.workers.Remove()
+	//if w != nil {
+	//	return w
+	//}
 
 	// 这里需要加锁，因为 isFullFunc() 的判断虽然是原子性的，但是它跟下面的创建 worker 的操作合在一起并不是原子性的
 	// 比如当前 pool 还有一个空余位置，同时来了两个 goroutine
@@ -215,13 +223,17 @@ func (p *pool) getWorker(isFull isFullFunc) (w *worker) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
+	if p.IsClosed() {
+		return nil
+	}
+
 	// 当前是否能够创建新的 worker
 	if isFull() {
 		return nil
 	}
 
 	// 创建一个新的 worker
-	w = NewWorker(p)
+	w = NewWorker(p, task)
 	// 让 worker 先开始运行等待任务
 	w.run()
 	// runningSize+1，表示当前存在的 worker 数+1
@@ -232,10 +244,16 @@ func (p *pool) getWorker(isFull isFullFunc) (w *worker) {
 
 // enTaskQueue
 func (p *pool) enTaskQueue(task taskFunc) bool {
+	if p.IsClosed() {
+		return false
+	}
 	return p.taskQueue.Add(task)
 }
 
 // enTaskQueue
-func (p *pool) deTaskQueue() (task taskFunc) {
-	return p.taskQueue.Poll()
+func (p *pool) deTaskQueue(timeout int32) (task taskFunc) {
+	if p.IsClosed() {
+		return nil
+	}
+	return p.taskQueue.PollWithTimeout(timeout)
 }

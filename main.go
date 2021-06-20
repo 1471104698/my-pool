@@ -19,11 +19,11 @@ func addErr(i int32) {
 	atomic.AddInt32(&errs, i)
 }
 
-var p = gpool.NewPool(5, 20)
+var p = gpool.NewPool(5, 20, 2)
 
 func main() {
 
-	times := 1000
+	times := 3000
 	test(times)
 }
 
@@ -40,9 +40,12 @@ func test(times int) {
 
 	time.Sleep(2 * time.Second)
 	p.Close()
+	fmt.Println("运行的线程数：", p.RunningSize())
+	fmt.Println("最大线程数：", p.MaxSize())
 	time.Sleep(2 * time.Second)
 	fmt.Println("运行的线程数：", p.RunningSize())
 	fmt.Println("最大线程数：", p.MaxSize())
+
 	fmt.Println("预期 sum 值：", getSum(times))
 	fmt.Println("实际 sum 值:", sum)
 	fmt.Println("发生错误数 errs:", errs)
