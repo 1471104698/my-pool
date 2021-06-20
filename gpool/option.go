@@ -9,12 +9,12 @@ import (
 type RejectHandler = func(task func()) (err error)
 
 // PanicHandler
-type PanicHandler = func(err error)
+type PanicHandler = func(err interface{})
 
 var (
 	// 默认的 Panic 处理策略
-	defaultPanicHandler = func(err error) {
-		fmt.Printf("发生错误 err: %v\n", err)
+	defaultPanicHandler = func(err interface{}) {
+		fmt.Printf("发生 panic err: %v\n", err)
 	}
 	// 默认的拒绝策略
 	defaultRejectHandler = func(task func()) (err error) {
@@ -39,7 +39,10 @@ type Options struct {
 	panicHandler PanicHandler
 	// 拒绝策略
 	rejectHandler RejectHandler
-
+	// 当任务来临而没有 worker 可以创建，同时任务队列已满的时候是否阻塞当前 goroutine 等待出现空闲的 worker
+	isBlocking bool
+	// 最大的阻塞 goroutine 数
+	blockMaxNum int32
 	// 日志输出
 	logger *log.Logger
 }

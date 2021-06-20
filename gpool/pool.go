@@ -97,22 +97,22 @@ func (p *pool) Submit(task taskFunc) error {
 	}
 
 	// 对任务执行过程中发生的 panic 处理
-	defer func() {
-		if err := recover(); err != nil {
-			if h := p.opts.panicHandler; h != nil {
-				h(err.(error))
-			} else {
-				panic(err)
-			}
-		}
-	}()
+	//defer func() {
+	//	if err := recover(); err != nil {
+	//		if h := p.opts.panicHandler; h != nil {
+	//			h(err.(error))
+	//		} else {
+	//			panic(err)
+	//		}
+	//	}
+	//}()
 
 	// 获取 worker 来执行任务
 	w := p.getWorker(p.isCoreFull)
 	// worker 数量达到了 core
 	if w == nil {
 		// 将任务放到任务队列中
-		if !enTaskQueue(task) {
+		if !p.enTaskQueue(task) {
 			// 任务队列已满，那么创建 非 core worker
 			w = p.getWorker(p.isMaxFull)
 			if w == nil {
@@ -158,6 +158,11 @@ func (p *pool) CoreSize() int32 {
 }
 
 // ---------------------------------------------------------------------------------------------------
+
+// preAllocateWorker
+func preAllocateWorker() {
+
+}
 
 // newLocker
 func newLocker() sync.Locker {
@@ -222,6 +227,6 @@ func (p *pool) getWorker(isFull isFullFunc) (w *worker) {
 }
 
 // enTaskQueue
-func enTaskQueue(task func()) bool {
-	return false
+func (p *pool) enTaskQueue(task taskFunc) bool {
+	return p.taskQueue.Add(task)
 }
