@@ -59,7 +59,7 @@ func NewPool(core, max int32, opts ...Option) *pool {
 		cond:        sync.NewCond(newLocker()),
 		opts:        setOptions(opts),
 		workers:     NewWorkers(-1),
-		taskQueue:   NewTaskQueue(1),
+		taskQueue:   NewTaskQueue(-1),
 	}
 	p.init()
 	return p
@@ -97,15 +97,15 @@ func (p *pool) Submit(task taskFunc) error {
 	}
 
 	// 对任务执行过程中发生的 panic 处理
-	//defer func() {
-	//	if err := recover(); err != nil {
-	//		if h := p.opts.panicHandler; h != nil {
-	//			h(err.(error))
-	//		} else {
-	//			panic(err)
-	//		}
-	//	}
-	//}()
+	defer func() {
+		if err := recover(); err != nil {
+			if h := p.opts.panicHandler; h != nil {
+				h(err.(error))
+			} else {
+				panic(err)
+			}
+		}
+	}()
 
 	// 获取 worker 来执行任务
 	w := p.getWorker(p.isCoreFull)
@@ -117,9 +117,9 @@ func (p *pool) Submit(task taskFunc) error {
 			w = p.getWorker(p.isMaxFull)
 			if w == nil {
 				// 执行拒绝策略
-				if r := p.opts.rejectHandler; r != nil {
-					return r(task)
-				}
+				//if r := p.opts.rejectHandler; r != nil {
+				//	return r(task)
+				//}
 				return poolFullErr
 			}
 		}
@@ -158,11 +158,6 @@ func (p *pool) CoreSize() int32 {
 }
 
 // ---------------------------------------------------------------------------------------------------
-
-// preAllocateWorker
-func preAllocateWorker() {
-
-}
 
 // newLocker
 func newLocker() sync.Locker {
@@ -229,4 +224,9 @@ func (p *pool) getWorker(isFull isFullFunc) (w *worker) {
 // enTaskQueue
 func (p *pool) enTaskQueue(task taskFunc) bool {
 	return p.taskQueue.Add(task)
+}
+
+// enTaskQueue
+func (p *pool) deTaskQueue() (task taskFunc) {
+	return p.taskQueue.Poll()
 }

@@ -29,7 +29,7 @@ func NewWorker(p *pool) *worker {
 func (w *worker) run() {
 	// 开启一个 goroutine 执行任务
 	go func() {
-		// 阻塞接收任务
+		// 阻塞接收任务，chan 阻塞的是 G，不会影响到 M，M 仍然可以继续去跟其他的 G 进行绑定
 		for t := range w.task {
 			// 如果当前 worker 被要求停止运行，那么停止阻塞
 			if w.isStop() {
@@ -48,7 +48,11 @@ func (w *worker) run() {
 			}
 			// 执行任务
 			t()
-			// 入队 workers，继续等待任务调度
+			// 从任务队列中获取任务，如果队列中有任务那么一直执行
+			for t = w.p.deTaskQueue(); t != nil; t = w.p.deTaskQueue() {
+				t()
+			}
+			// 没有任务执行，入队 workers，继续等待任务调度
 			w.p.addWorker(w)
 		}
 	}()

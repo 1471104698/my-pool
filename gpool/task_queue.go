@@ -6,7 +6,7 @@ import (
 
 const (
 	// defaultTaskQueueCap
-	defaultTaskQueueCap = 10
+	defaultTaskQueueCap = 1000
 )
 
 // taskFunc
@@ -56,7 +56,8 @@ func (q *taskQueue) Poll() (task taskFunc) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
-	return q.dequeue()
+	task = q.dequeue()
+	return task
 }
 
 // enqueue 入队，调用该方法时必须获取锁
@@ -65,7 +66,7 @@ func (q *taskQueue) enqueue(task taskFunc) bool {
 		return false
 	}
 	q.tasks[q.tail] = task
-	q.tail = (q.tail) + 1%q.cap
+	q.tail = (q.tail + 1) % q.cap
 	q.len++
 	return true
 }
@@ -77,7 +78,7 @@ func (q *taskQueue) dequeue() (task taskFunc) {
 	}
 	task = q.tasks[q.head]
 	q.tasks[q.head] = nil
-	q.head = (q.head) + 1%q.cap
+	q.head = (q.head + 1) % q.cap
 	q.len--
 	return task
 }
