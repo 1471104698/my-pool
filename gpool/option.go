@@ -1,22 +1,32 @@
 package gpool
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+)
 
-// DefaultPanicHandler 默认的 Panic 处理策略
-var DefaultPanicHandler = func() {
-	if err := recover(); err != nil {
-		fmt.Printf("err: %v\n", err)
-	}
-}
-
-// DefaultRejectHandler 默认的
-var DefaultRejectHandler = func(task interface{}) {
-	fmt.Printf("任务被丢弃, task: %+v\n", task)
-	return
-}
+// RejectHandler
+type RejectHandler = func(task interface{})
 
 // PanicHandler
 type PanicHandler = func()
+
+var (
+	// 默认的 Panic 处理策略
+	defaultPanicHandler = func() {
+		if err := recover(); err != nil {
+			fmt.Printf("err: %v\n", err)
+		}
+	}
+	// 默认的拒绝策略
+	defaultRejectHandler = func(task interface{}) {
+		fmt.Printf("任务被丢弃, task: %+v\n", task)
+		return
+	}
+
+	// 默认的日志输出
+	defaultLogger = &log.Logger{}
+)
 
 // Option
 type Option func(*Options)
@@ -31,6 +41,8 @@ type Options struct {
 	panicHandler PanicHandler
 	// 拒绝策略
 	rejectHandler RejectHandler
+	// 日志输出
+	logger *log.Logger
 }
 
 // WithIsPreAllocation
@@ -58,6 +70,13 @@ func WithPanicHandler(panicHandler PanicHandler) Option {
 func WithRejectHandler(rejectHandler RejectHandler) Option {
 	return func(opt *Options) {
 		opt.rejectHandler = rejectHandler
+	}
+}
+
+// WithLogger
+func WithLogger(logger *log.Logger) Option {
+	return func(opt *Options) {
+		opt.logger = logger
 	}
 }
 
