@@ -103,12 +103,12 @@ func (p *pool) init() {
 func (p *pool) cleanStopWorker() {
 	// NewTimer(d) (*Timer) 创建一个 Timer，内部维护了一个 chan Time 类型的 C 字段，它会在过去时间段 d 后，向其自身的 C 字段发送当时的时间，只有一次触发机会
 	// NewTicker 返回一个新的 Ticker，该 Ticker 内部维护了一个 chan Time 类型的 C 字段，并会每隔时间段 d 就向该通道发送当时的时间。即有多次触发机会
-	checker := time.NewTicker(p.opts.cleanTime)
-	// 注意停止该 checker
-	defer checker.Stop()
+	ticker := time.NewTicker(p.opts.cleanTime)
+	// 注意停止该 ticker
+	defer ticker.Stop()
 	// 坑点：这里是为了随机数处理，用来初始化随机变量，如果没有初始化，那么 rand.Intn() 得到的都是固定的值，而非一个随机值
 	rand.Seed(time.Now().UnixNano())
-	for range checker.C {
+	for range ticker.C {
 		if p.IsClosed() {
 			return
 		}
