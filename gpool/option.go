@@ -95,7 +95,7 @@ func WithLogger(logger *log.Logger) Option {
 // setOptions
 func setOptions(opts []Option) *Options {
 	options := new(Options)
-	if opts == nil || len(opts) > 0 {
+	if opts == nil || len(opts) == 0 {
 		return options
 	}
 	for _, opt := range opts {
