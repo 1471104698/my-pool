@@ -6,8 +6,8 @@ import (
 )
 
 const (
-	// defaultTaskQueueCap
-	defaultTaskQueueCap = 10000
+	// DefaultTaskQueueCap
+	DefaultTaskQueueCap = 10000
 )
 
 // taskFunc
@@ -31,7 +31,7 @@ type taskQueue struct {
 // NewTaskQueue
 func NewTaskQueue(cap int32) *taskQueue {
 	if cap <= 0 {
-		cap = defaultTaskQueueCap
+		cap = DefaultTaskQueueCap
 	}
 	return &taskQueue{
 		cap:   cap,
@@ -65,8 +65,8 @@ func (q *taskQueue) Poll() (task taskFunc) {
 }
 
 // PollWithTimeout
-func (q *taskQueue) PollWithTimeout(timeout int32) (task taskFunc) {
-	endTime := time.Now().Add(time.Duration(timeout) * time.Second)
+func (q *taskQueue) PollWithTimeout(timeout int32, duration time.Duration) (task taskFunc) {
+	endTime := time.Now().Add(time.Duration(timeout) * duration)
 	for {
 		if task = q.Poll(); task != nil {
 			return task

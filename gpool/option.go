@@ -3,6 +3,7 @@ package gpool
 import (
 	"fmt"
 	"log"
+	"time"
 )
 
 // RejectHandler
@@ -31,6 +32,8 @@ type Option func(*Options)
 
 // Options pool 可选参数
 type Options struct {
+	// workers 清理周期
+	cleanTime time.Duration
 	// 是否预创建 worker
 	isPreAllocation bool
 	// 预创建的 worker 数
@@ -45,6 +48,13 @@ type Options struct {
 	blockMaxNum int32
 	// 日志输出
 	logger *log.Logger
+}
+
+// WithCleanTime
+func WithCleanTime(cleanTime time.Duration) Option {
+	return func(opt *Options) {
+		opt.cleanTime = cleanTime
+	}
 }
 
 // WithIsPreAllocation

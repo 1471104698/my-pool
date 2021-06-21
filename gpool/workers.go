@@ -136,6 +136,19 @@ func (ws *workers) dequeue() (w *worker) {
 	return w
 }
 
+// checkWorker
+func (ws *workers) checkWorker(i int32) {
+	ws.lock.Lock()
+	defer ws.lock.Unlock()
+	if i >= ws.len || i < 0 {
+		return
+	}
+	if ws.workers[i].IsStop() {
+		ws.workers[i] = nil
+		ws.workers = append(ws.workers[0:i], ws.workers[i+1:]...)
+	}
+}
+
 // IsFull
 func (ws *workers) IsFull() bool {
 	return atomic.LoadInt32(&ws.len) == ws.cap

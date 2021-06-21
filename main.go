@@ -30,19 +30,15 @@ func main() {
 func test(times int) {
 	for i := 0; i < times; i++ {
 		i := i
-		err := p.Submit(func() {
+		p.Submit(func() {
 			add(int32(i))
 		})
-		if err != nil {
-			addErr(1)
-		}
 	}
-
-	time.Sleep(2 * time.Second)
+	time.Sleep(time.Second)
 	p.Close()
 	fmt.Println("运行的线程数：", p.RunningSize())
 	fmt.Println("最大线程数：", p.MaxSize())
-	time.Sleep(2 * time.Second)
+	time.Sleep(time.Second)
 	fmt.Println("运行的线程数：", p.RunningSize())
 	fmt.Println("最大线程数：", p.MaxSize())
 

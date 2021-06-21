@@ -2,8 +2,10 @@ package gpool
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -11,18 +13,19 @@ const (
 	DefaultMaxSize = 64
 	// pool 默认容量
 	DefaultCoreSize = 16
+	// 清理无效 worker 时间周期
+	DefaultCleanStopWorkerTime = time.Second
 )
 
 // pool 的状态
 const (
-	// 初始状态，目前还没有线程在执行
-	Init = iota
 	// pool 正在运行
-	Running
+	Running = iota
 	// pool 已经关闭
 	Closed
 )
 
+// 常用错误
 var (
 	poolClosedErr = fmt.Errorf("pool is closed")
 	poolFullErr   = fmt.Errorf("pool is full")
@@ -56,7 +59,7 @@ func NewPool(core, max, freeTime int32, opts ...Option) *pool {
 		coreSize:    core,
 		freeTime:    freeTime,
 		runningSize: 0,
-		status:      Init,
+		status:      Running,
 		lock:        newLocker(),
 		cond:        sync.NewCond(newLocker()),
 		opts:        setOptions(opts),
@@ -64,6 +67,8 @@ func NewPool(core, max, freeTime int32, opts ...Option) *pool {
 		taskQueue:   NewTaskQueue(-1),
 	}
 	p.init()
+	// 开启一个线程定时清除 无效 worker
+	go p.cleanStopWorker()
 	return p
 }
 
@@ -79,6 +84,10 @@ func (p *pool) init() {
 		p.coreSize = p.maxSize
 	}
 
+	if p.opts.cleanTime <= 0 {
+		p.opts.cleanTime = DefaultCleanStopWorkerTime
+	}
+
 	if p.opts.rejectHandler == nil {
 		p.opts.rejectHandler = defaultRejectHandler
 	}
@@ -87,6 +96,27 @@ func (p *pool) init() {
 	}
 	if p.opts.logger == nil {
 		p.opts.logger = defaultLogger
+	}
+}
+
+// cleanStopWorker
+func (p *pool) cleanStopWorker() {
+	// NewTimer(d) (*Timer) 创建一个 Timer，内部维护了一个 chan Time 类型的 C 字段，它会在过去时间段 d 后，向其自身的 C 字段发送当时的时间，只有一次触发机会
+	// NewTicker 返回一个新的 Ticker，该 Ticker 内部维护了一个 chan Time 类型的 C 字段，并会每隔时间段 d 就向该通道发送当时的时间。即有多次触发机会
+	checker := time.NewTicker(p.opts.cleanTime)
+	// 注意停止该 checker
+	defer checker.Stop()
+	rand.Seed(time.Now().UnixNano())
+	for range checker.C {
+		if p.IsClosed() {
+			return
+		}
+		// 每次随机扫描 len/4 个随机位置的 worker，如果过期了那么进行移除
+		l := int(p.workers.len)
+		for i := 0; i < l/4; i++ {
+			idx := rand.Intn(l)
+			p.workers.checkWorker(int32(idx))
+		}
 	}
 }
 
@@ -160,6 +190,10 @@ func (p *pool) CoreSize() int32 {
 	return p.coreSize
 }
 
+func (p *pool) FreeSize() int32 {
+	return p.MaxSize() - p.RunningSize()
+}
+
 // Close
 func (p *pool) Close() {
 	// 获取锁，使得其他 goroutine 无法创建新的 worker
@@ -170,6 +204,15 @@ func (p *pool) Close() {
 	p.workers.reset()
 	// 清空任务队列的任务
 	p.taskQueue.reset()
+}
+
+// Reboot 重启被关闭的 pool
+func (p *pool) Reboot() {
+	// 因为这里可能存在 goroutine 同时修改状态，而我们需要启动一个清除 stop worker 的 goroutine
+	// 因此为了避免启动多余的线程，这里使用 CAS，如果修改成功，那么由当前 goroutine 去开启 clean goroutine，失败的话表示已经有其他的 goroutine 开启了
+	if atomic.CompareAndSwapInt32(&p.status, Closed, Running) {
+		go p.cleanStopWorker()
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -197,14 +240,6 @@ func (p *pool) incrRunning(i int32) {
 // setStatus
 func (p *pool) setStatus(status int32) {
 	atomic.StoreInt32(&p.status, status)
-}
-
-// addWorker
-func (p *pool) addWorker(w *worker) {
-	if p.IsClosed() || w.IsStop() {
-		return
-	}
-	p.workers.Put(w)
 }
 
 // getWorker
@@ -243,6 +278,14 @@ func (p *pool) getWorker(isFull isFullFunc, task taskFunc) (w *worker) {
 	return w
 }
 
+// addWorker
+func (p *pool) addWorker(w *worker) {
+	if p.IsClosed() || w.IsStop() {
+		return
+	}
+	p.workers.Put(w)
+}
+
 // enTaskQueue
 func (p *pool) enTaskQueue(task taskFunc) bool {
 	if p.IsClosed() {
@@ -256,5 +299,5 @@ func (p *pool) deTaskQueue(timeout int32) (task taskFunc) {
 	if p.IsClosed() {
 		return nil
 	}
-	return p.taskQueue.PollWithTimeout(timeout)
+	return p.taskQueue.PollWithTimeout(timeout, time.Nanosecond)
 }
