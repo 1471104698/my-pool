@@ -41,11 +41,12 @@ func (w *worker) run() {
 					w.setStatus(WorkerStop)
 					return
 				}
-				// 没有任务执行，入队 workers，继续等待任务调度
-				//w.p.addWorker(w)
+
 			} else {
 				// 执行任务
 				t()
+				// 入队 workers，继续等待任务调度
+				//w.p.addWorker(w)
 			}
 		}
 	}()

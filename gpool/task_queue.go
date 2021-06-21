@@ -75,6 +75,7 @@ func (q *taskQueue) PollWithTimeout(timeout int32, duration time.Duration) (task
 		if remaining < 0 {
 			break
 		}
+		// 等待添加时传入的信息
 		select {
 		case <-q.ch:
 		case <-time.After(remaining):
@@ -91,6 +92,7 @@ func (q *taskQueue) enqueue(task taskFunc) bool {
 	q.tasks[q.tail] = task
 	q.tail = (q.tail + 1) % q.cap
 	q.len++
+	// 添加的时候传递信息，用于 PollWithTimeout，这里并不进行无限期的等待，超时等待
 	select {
 	case q.ch <- struct{}{}:
 	case <-time.After(time.Millisecond):

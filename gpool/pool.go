@@ -123,7 +123,6 @@ func (p *pool) cleanStopWorker() {
 
 // Submit 任务提交
 func (p *pool) Submit(task taskFunc) error {
-	// 接收到一个任务，此时应该怎么做？
 	// 判断 pool 是否已经关闭
 	if p.IsClosed() {
 		return poolClosedErr
