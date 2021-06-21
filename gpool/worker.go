@@ -13,10 +13,9 @@ const (
 
 // worker
 type worker struct {
-	p        *pool
-	task     taskFunc
-	status   int32
-	freeTime int32
+	p      *pool
+	task   taskFunc
+	status int32
 }
 
 // NewWorker
@@ -60,7 +59,7 @@ func (w *worker) getTask() (t taskFunc) {
 		return t
 	}
 	// 尝试从任务队列中获取任务
-	t = w.p.deTaskQueue(w.freeTime)
+	t = w.p.deTaskQueue(w.p.freeTime)
 	if t != nil {
 		return t
 	}
