@@ -106,6 +106,7 @@ func (p *pool) cleanStopWorker() {
 	checker := time.NewTicker(p.opts.cleanTime)
 	// 注意停止该 checker
 	defer checker.Stop()
+	// 坑点：这里是为了随机数处理，用来初始化随机变量，如果没有初始化，那么 rand.Intn() 得到的都是固定的值，而非一个随机值
 	rand.Seed(time.Now().UnixNano())
 	for range checker.C {
 		if p.IsClosed() {
