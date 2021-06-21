@@ -146,6 +146,7 @@ func (ws *workers) checkWorker(i int32) {
 	if ws.workers[i].IsStop() {
 		ws.workers[i] = nil
 		ws.workers = append(ws.workers[0:i], ws.workers[i+1:]...)
+		ws.len--
 	}
 }
 
