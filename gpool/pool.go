@@ -9,12 +9,17 @@ import (
 )
 
 const (
-	// pool 默认容量
+	// DefaultMaxSize pool 默认容量
 	DefaultMaxSize = 64
-	// pool 默认容量
+	// DefaultCoreSize pool 默认容量
 	DefaultCoreSize = 16
-	// 清理无效 worker 时间周期
+	// DefaultCleanStopWorkerTime 清理无效 worker 时间周期
 	DefaultCleanStopWorkerTime = time.Second
+
+	// DefaultBlockingTime 默认最大的 Submit() 阻塞 goroutine 时长
+	DefaultBlockingTime = 10 * time.Nanosecond
+	// DefaultMaxBlockNum 默认最大阻塞数
+	DefaultMaxBlockNum = 1000
 )
 
 // pool 的状态
@@ -41,9 +46,12 @@ type pool struct {
 	runningSize int32
 	status      int32
 	freeTime    int32
+	blockSize   int32
 
 	lock sync.Locker
 	cond *sync.Cond
+
+	ch chan struct{}
 
 	// 这里实际上应该将 workers 做成一个接口，这样可以接收不同实现的任务队列
 	workers   *workers
@@ -54,14 +62,15 @@ type pool struct {
 
 // NewPool
 func NewPool(core, max, freeTime int32, opts ...Option) *pool {
+	lock := newLocker()
 	p := &pool{
 		maxSize:     max,
 		coreSize:    core,
 		freeTime:    freeTime,
 		runningSize: 0,
 		status:      Running,
-		lock:        newLocker(),
-		cond:        sync.NewCond(newLocker()),
+		lock:        lock,
+		cond:        sync.NewCond(lock),
 		opts:        setOptions(opts),
 		workers:     NewWorkers(-1),
 		taskQueue:   NewTaskQueue(-1),
@@ -82,6 +91,16 @@ func (p *pool) init() {
 	}
 	if p.coreSize > p.maxSize {
 		p.coreSize = p.maxSize
+	}
+
+	if p.opts.isBlocking {
+		if p.opts.blockingTime <= 0 {
+			p.opts.blockingTime = DefaultBlockingTime
+		}
+		if p.opts.blockMaxNum <= 0 {
+			p.opts.blockMaxNum = DefaultMaxBlockNum
+		}
+		p.ch = make(chan struct{}, p.opts.blockMaxNum)
 	}
 
 	if p.opts.cleanTime <= 0 {
@@ -148,6 +167,10 @@ func (p *pool) Submit(task taskFunc) error {
 			// 任务队列已满，那么创建 非 core worker
 			w = p.getWorker(p.isMaxFull, task)
 			if w == nil {
+				// 阻塞等待并存储到队列中
+				if p.isNeedBlocking() && p.blockWait(task) {
+					return nil
+				}
 				// 执行拒绝策略
 				if r := p.opts.rejectHandler; r != nil {
 					return r(task)
@@ -190,8 +213,14 @@ func (p *pool) CoreSize() int32 {
 	return p.coreSize
 }
 
+// FreeSize
 func (p *pool) FreeSize() int32 {
 	return p.MaxSize() - p.RunningSize()
+}
+
+// BlockSize
+func (p *pool) BlockSize() int32 {
+	return atomic.LoadInt32(&p.blockSize)
 }
 
 // Close
@@ -235,6 +264,11 @@ func (p *pool) isCoreFull() bool {
 // incrRunning
 func (p *pool) incrRunning(i int32) {
 	atomic.AddInt32(&p.runningSize, i)
+}
+
+// isNeedBlocking
+func (p *pool) isNeedBlocking() bool {
+	return p.opts.isBlocking && p.BlockSize() < p.opts.blockMaxNum
 }
 
 // setStatus
@@ -300,4 +334,24 @@ func (p *pool) deTaskQueue(timeout int32) (task taskFunc) {
 		return nil
 	}
 	return p.taskQueue.PollWithTimeout(timeout, time.Nanosecond)
+}
+
+// blockWait
+func (p *pool) blockWait(task taskFunc) bool {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	p.blockSize++
+	endTime := time.Now().Add(p.opts.blockingTime)
+	for !p.enTaskQueue(task) && p.IsRunning() {
+		remaining := endTime.Sub(time.Now())
+		if remaining < 0 {
+			return false
+		}
+		select {
+		case <-p.ch:
+		case <-time.After(remaining):
+		}
+	}
+	p.blockSize--
+	return true
 }

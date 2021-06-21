@@ -95,7 +95,7 @@ func (q *taskQueue) enqueue(task taskFunc) bool {
 	// 添加的时候传递信息，用于 PollWithTimeout，这里并不进行无限期的等待，超时等待
 	select {
 	case q.ch <- struct{}{}:
-	case <-time.After(time.Millisecond):
+	case <-time.After(time.Nanosecond):
 	}
 	return true
 }

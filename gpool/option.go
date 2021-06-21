@@ -46,6 +46,9 @@ type Options struct {
 	isBlocking bool
 	// 最大的阻塞 goroutine 数
 	blockMaxNum int32
+	// 阻塞超时时间
+	blockingTime time.Duration
+
 	// 日志输出
 	logger *log.Logger
 }
@@ -82,6 +85,27 @@ func WithPanicHandler(panicHandler PanicHandler) Option {
 func WithRejectHandler(rejectHandler RejectHandler) Option {
 	return func(opt *Options) {
 		opt.rejectHandler = rejectHandler
+	}
+}
+
+// WithIsBlocking
+func WithIsBlocking(isBlocking bool) Option {
+	return func(opt *Options) {
+		opt.isBlocking = isBlocking
+	}
+}
+
+// WithBlockMaxNum
+func WithBlockMaxNum(blockMaxNum int32) Option {
+	return func(opt *Options) {
+		opt.blockMaxNum = blockMaxNum
+	}
+}
+
+// WithBlockingTime
+func WithBlockingTime(blockingTime time.Duration) Option {
+	return func(opt *Options) {
+		opt.blockingTime = blockingTime
 	}
 }
 

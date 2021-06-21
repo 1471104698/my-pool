@@ -12,8 +12,8 @@ var (
 )
 
 const (
-	// defaultWorkersCap
-	defaultWorkersCap = 100
+	// DefaultWorkersCap
+	DefaultWorkersCap = 100
 )
 
 // workers
@@ -31,7 +31,7 @@ type workers struct {
 // NewWorkers
 func NewWorkers(cap int32) (ws *workers) {
 	if cap <= 0 {
-		cap = defaultWorkersCap
+		cap = DefaultWorkersCap
 	}
 	lock := newLocker()
 	return &workers{

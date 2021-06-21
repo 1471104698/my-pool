@@ -2,6 +2,7 @@ package gpool
 
 import (
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -45,6 +46,14 @@ func (w *worker) run() {
 			} else {
 				// 执行任务
 				t()
+				// 唤醒阻塞等待中的 Submit() goroutine
+				if w.p.opts.isBlocking {
+					select {
+					case w.p.ch <- struct{}{}:
+					case <-time.After(time.Nanosecond):
+					}
+				}
+
 				// 入队 workers，继续等待任务调度
 				//w.p.addWorker(w)
 			}
