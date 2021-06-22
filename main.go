@@ -27,15 +27,13 @@ func main() {
 		sum = 0
 		for i := 0; i < times; i++ {
 			i := i
-			go func() {
-				err := p.Submit(func() {
-					time.Sleep(time.Nanosecond)
-					add(int32(i))
-				})
-				if err != nil {
-					addErr(1)
-				}
-			}()
+			err := p.Submit(func() {
+				time.Sleep(time.Nanosecond)
+				add(int32(i))
+			})
+			if err != nil {
+				addErr(1)
+			}
 		}
 		time.Sleep(time.Second)
 		p.Close()
