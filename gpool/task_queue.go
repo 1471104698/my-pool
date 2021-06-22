@@ -7,7 +7,7 @@ import (
 
 const (
 	// DefaultTaskQueueCap
-	DefaultTaskQueueCap = 10000
+	DefaultTaskQueueCap = 1000
 )
 
 // taskFunc

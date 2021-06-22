@@ -21,21 +21,23 @@ func addErr(i int32) {
 
 func main() {
 	var p = gpool.NewPool(5, 20, 2, gpool.WithIsBlocking(true))
-	times := 4000
+	times := 5000
 	for i := 0; i < 1; i++ {
 		p.Reboot()
 		sum = 0
 		for i := 0; i < times; i++ {
 			i := i
-			err := p.Submit(func() {
-				time.Sleep(time.Nanosecond)
-				add(int32(i))
-			})
-			if err != nil {
-				addErr(1)
-			}
+			go func() {
+				err := p.Submit(func() {
+					time.Sleep(time.Nanosecond)
+					add(int32(i))
+				})
+				if err != nil {
+					addErr(1)
+				}
+			}()
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(time.Second)
 		p.Close()
 		fmt.Println("运行的线程数：", p.RunningSize())
 		fmt.Println("最大线程数：", p.MaxSize())

@@ -47,12 +47,7 @@ func (w *worker) run() {
 				// 执行任务
 				t()
 				// 唤醒阻塞等待中的 Submit() goroutine
-				if w.p.opts.isBlocking {
-					select {
-					case w.p.ch <- struct{}{}:
-					case <-time.After(time.Nanosecond):
-					}
-				}
+				w.signal()
 
 				// 入队 workers，继续等待任务调度
 				//w.p.addWorker(w)
@@ -122,4 +117,14 @@ func (w *worker) IsRunning() bool {
 // IsStop
 func (w *worker) IsStop() bool {
 	return atomic.LoadInt32(&w.status) >= WorkerStop
+}
+
+// signal 唤醒 Submit 等待的 goroutine
+func (w *worker) signal() {
+	if w.p.opts.isBlocking {
+		select {
+		case w.p.ch <- struct{}{}:
+		case <-time.After(time.Nanosecond):
+		}
+	}
 }
