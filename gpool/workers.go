@@ -6,29 +6,36 @@ import (
 	"sync/atomic"
 )
 
+// 常用错误
 var (
 	fullErr  = fmt.Errorf("queue is full")
 	emptyErr = fmt.Errorf("queue is empty")
 )
 
 const (
-	// DefaultWorkersCap
+	// DefaultWorkersCap 默认 workers 队列容量
 	DefaultWorkersCap = 100
 )
 
 // workers
 type workers struct {
+	// 容量
 	cap int32
+	// 元素个数
 	len int32
 
-	lock     sync.Locker
+	// 全局锁
+	lock sync.Locker
+	// 生产者
 	producer *sync.Cond
+	// 消费者
 	consumer *sync.Cond
 
+	// worker 容器
 	workers []*worker
 }
 
-// NewWorkers
+// NewWorkers 创建一个 workers
 func NewWorkers(cap int32) (ws *workers) {
 	if cap <= 0 {
 		cap = DefaultWorkersCap
@@ -136,7 +143,7 @@ func (ws *workers) dequeue() (w *worker) {
 	return w
 }
 
-// checkWorker
+// checkWorker 检查 worker 是否正在运行，如果已经停止运行，那么将它移除
 func (ws *workers) checkWorker(i int32) {
 	ws.lock.Lock()
 	defer ws.lock.Unlock()
@@ -150,17 +157,17 @@ func (ws *workers) checkWorker(i int32) {
 	}
 }
 
-// IsFull
+// IsFull 判断队列是否已满
 func (ws *workers) IsFull() bool {
 	return atomic.LoadInt32(&ws.len) == ws.cap
 }
 
-// IsEmpty
+// IsEmpty 判断队列是否为空
 func (ws *workers) IsEmpty() bool {
 	return atomic.LoadInt32(&ws.len) == 0
 }
 
-// reset
+// reset 重置 workers 队列，清空所有的 worker，初始化状态
 func (ws *workers) reset() {
 	for k, w := range ws.workers {
 		w.setStatus(WorkerStop)

@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
+// worker 状态
 const (
-	WorkerInit = iota
-	WorkerRunning
+	WorkerRunning = iota
 	WorkerFree
 	WorkerStop
 )
@@ -19,12 +19,12 @@ type worker struct {
 	status int32
 }
 
-// NewWorker
+// NewWorker 创建一个 worker
 func NewWorker(p *pool, task taskFunc) *worker {
 	return &worker{
 		p:      p,
 		task:   task,
-		status: WorkerInit,
+		status: WorkerRunning,
 	}
 }
 
@@ -33,6 +33,10 @@ func (w *worker) run() {
 	w.setStatus(WorkerRunning)
 	// 开启一个 goroutine 执行任务
 	go func() {
+
+		// 对任务执行过程中发生的 panic 处理
+		defer w.p.handlePanic()
+
 		// 阻塞接收任务，chan 阻塞的是 G，不会影响到 M，M 仍然可以继续去跟其他的 G 进行绑定
 		for {
 			t := w.getTask()
@@ -56,7 +60,7 @@ func (w *worker) run() {
 	}()
 }
 
-// getTask
+// getTask 获取任务
 func (w *worker) getTask() (t taskFunc) {
 	if w.task != nil {
 		t = w.task
@@ -64,14 +68,14 @@ func (w *worker) getTask() (t taskFunc) {
 		return t
 	}
 	// 尝试从任务队列中获取任务
-	t = w.p.deTaskQueue(w.p.freeTime)
+	t = w.p.deTaskQueueTimeout(w.p.freeTime)
 	if t != nil {
 		return t
 	}
 	return nil
 }
 
-// getTask2
+// getTask2 获取任务
 func (w *worker) getTask2() (t taskFunc) {
 	// 利用 select 来完成超时控制
 	//select {
@@ -81,7 +85,7 @@ func (w *worker) getTask2() (t taskFunc) {
 	//
 	//}
 	//// 尝试从任务队列中获取任务
-	//t = w.p.deTaskQueue(w.freeTime)
+	//t = w.p.deTaskQueueTimeout(w.freeTime)
 	//if t != nil {
 	//	return t
 	//}
@@ -93,7 +97,7 @@ func (w *worker) isRecycle() bool {
 	return w.isNeedStop() || w.p.RunningSize() > w.p.CoreSize()
 }
 
-// setStatus
+// setStatus 设置 worker 状态
 func (w *worker) setStatus(status int32) {
 	atomic.StoreInt32(&w.status, status)
 }
@@ -109,12 +113,12 @@ func (w *worker) isNeedStop() bool {
 	return false
 }
 
-// IsRunning
+// IsRunning 判断 worker 是否正在运行
 func (w *worker) IsRunning() bool {
 	return atomic.LoadInt32(&w.status) <= WorkerRunning
 }
 
-// IsStop
+// IsStop 判断 worker 已经停止运行
 func (w *worker) IsStop() bool {
 	return atomic.LoadInt32(&w.status) >= WorkerStop
 }

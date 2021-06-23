@@ -6,29 +6,36 @@ import (
 )
 
 const (
-	// DefaultTaskQueueCap
+	// DefaultTaskQueueCap 默认任务队列容量大小
 	DefaultTaskQueueCap = 1000
 )
 
-// taskFunc
+// taskFunc 任务类型
 type taskFunc = func()
 
 // taskQueue 任务队列，实现基本跟 workers 一致，可惜目前没有泛型（虽然听说出了，不过还没用）
 // 双向循环队列，头入队，尾出队，这里目前只支持一个 goroutine，如果要支持两个 goroutine，那么需要将 taskFunc 进行封装，每个内置一把 lock
 type taskQueue struct {
+	// 容量
 	cap int32
+	// 元素个数
 	len int32
 
+	// 队首索引
 	head int32
+	// 队尾索引
 	tail int32
+	// 全局锁
 	lock sync.Locker
 
+	// 用于超时控制
 	ch chan struct{}
 
+	// 存储任务的容器
 	tasks []taskFunc
 }
 
-// NewTaskQueue
+// NewTaskQueue 创建一个任务队列
 func NewTaskQueue(cap int32) *taskQueue {
 	if cap <= 0 {
 		cap = DefaultTaskQueueCap
@@ -44,7 +51,7 @@ func NewTaskQueue(cap int32) *taskQueue {
 	}
 }
 
-// Add
+// Add 添加，成功返回 true，失败返回 false，不阻塞等待
 func (q *taskQueue) Add(task taskFunc) bool {
 	if task == nil {
 		return false
@@ -55,7 +62,7 @@ func (q *taskQueue) Add(task taskFunc) bool {
 	return q.enqueue(task)
 }
 
-// Poll
+// Poll 获取，成功返回 任务，失败返回 nil，不阻塞等待
 func (q *taskQueue) Poll() (task taskFunc) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
@@ -64,7 +71,7 @@ func (q *taskQueue) Poll() (task taskFunc) {
 	return task
 }
 
-// PollWithTimeout
+// PollWithTimeout 超时获取，没有数据时会阻塞等待一段时间
 func (q *taskQueue) PollWithTimeout(timeout int32, duration time.Duration) (task taskFunc) {
 	endTime := time.Now().Add(time.Duration(timeout) * duration)
 	for {
@@ -100,7 +107,7 @@ func (q *taskQueue) enqueue(task taskFunc) bool {
 	return true
 }
 
-// deque
+// deque 出队，调用该方法时必须获取锁
 func (q *taskQueue) dequeue() (task taskFunc) {
 	if q.isEmpty() {
 		return nil
@@ -112,17 +119,17 @@ func (q *taskQueue) dequeue() (task taskFunc) {
 	return task
 }
 
-// isFull
+// isFull 判断队列是否已满
 func (q *taskQueue) isFull() bool {
 	return q.len == q.cap
 }
 
-// isEmpty
+// isEmpty 判断队列是否为空
 func (q *taskQueue) isEmpty() bool {
 	return q.len == 0
 }
 
-// reset
+// reset 重置 任务队列，清空所有的任务，初始化状态
 func (q *taskQueue) reset() {
 	q.lock.Lock()
 	defer q.lock.Unlock()

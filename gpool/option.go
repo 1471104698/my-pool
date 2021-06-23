@@ -2,7 +2,6 @@ package gpool
 
 import (
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -22,9 +21,6 @@ var (
 		//fmt.Printf("任务被丢弃, tast: %#v\n", task)
 		return fmt.Errorf("任务被丢弃")
 	}
-
-	// 默认的日志输出
-	defaultLogger = &log.Logger{}
 )
 
 // Option
@@ -48,9 +44,6 @@ type Options struct {
 	blockMaxNum int32
 	// 阻塞超时时间
 	blockingTime time.Duration
-
-	// 日志输出
-	logger *log.Logger
 }
 
 // WithCleanTime
@@ -106,13 +99,6 @@ func WithBlockMaxNum(blockMaxNum int32) Option {
 func WithBlockingTime(blockingTime time.Duration) Option {
 	return func(opt *Options) {
 		opt.blockingTime = blockingTime
-	}
-}
-
-// WithLogger
-func WithLogger(logger *log.Logger) Option {
-	return func(opt *Options) {
-		opt.logger = logger
 	}
 }
 
