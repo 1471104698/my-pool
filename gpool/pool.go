@@ -199,12 +199,12 @@ func (p *pool) RunningSize() int32 {
 
 // MaxSize 获取最大 worker 数
 func (p *pool) MaxSize() int32 {
-	return p.maxSize
+	return atomic.LoadInt32(&p.maxSize)
 }
 
 // CoreSize 获取最大 core worker 数
 func (p *pool) CoreSize() int32 {
-	return p.coreSize
+	return atomic.LoadInt32(&p.coreSize)
 }
 
 // BlockSize 获取 Submit() 阻塞 goroutine 数
@@ -215,11 +215,17 @@ func (p *pool) BlockSize() int32 {
 // SetCoreSize 动态设置 core worker 数
 func (p *pool) SetCoreSize(coreSize int32) {
 	// 这里并不需要使用 CAS，多个 goroutine 同时设置最终也会有一个确定的值
+	if coreSize > p.MaxSize() {
+		return
+	}
 	atomic.StoreInt32(&p.coreSize, coreSize)
 }
 
 // SetMaxSize 动态设置 max worker 数
 func (p *pool) SetMaxSize(maxSize int32) {
+	if maxSize < p.CoreSize() {
+		return
+	}
 	atomic.StoreInt32(&p.maxSize, maxSize)
 }
 
