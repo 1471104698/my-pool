@@ -10,9 +10,9 @@ import (
 
 const (
 	// DefaultMaxSize pool 默认容量
-	DefaultMaxSize = 64
+	DefaultMaxSize = 2000
 	// DefaultCoreSize pool 默认容量
-	DefaultCoreSize = 16
+	DefaultCoreSize = 1000
 	// DefaultCleanStopWorkerTime 清理无效 worker 时间周期
 	DefaultCleanStopWorkerTime = time.Second
 
@@ -83,7 +83,7 @@ func NewPool(core, max, freeTime int32, opts ...Option) *pool {
 		lock:        lock,
 		cond:        sync.NewCond(lock),
 		opts:        setOptions(opts),
-		workers:     NewWorkers(-1),
+		workers:     NewWorkers(max),
 		taskQueue:   NewTaskQueue(-1),
 	}
 	p.init()

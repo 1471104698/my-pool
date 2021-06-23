@@ -12,11 +12,6 @@ var (
 	emptyErr = fmt.Errorf("queue is empty")
 )
 
-const (
-	// DefaultWorkersCap 默认 workers 队列容量
-	DefaultWorkersCap = 100
-)
-
 // workers
 type workers struct {
 	// 容量
@@ -38,7 +33,7 @@ type workers struct {
 // NewWorkers 创建一个 workers
 func NewWorkers(cap int32) (ws *workers) {
 	if cap <= 0 {
-		cap = DefaultWorkersCap
+		return nil
 	}
 	lock := newLocker()
 	return &workers{

@@ -19,10 +19,10 @@ var wg sync.WaitGroup
 func main() {
 	wg = sync.WaitGroup{}
 
-	var p = gpool.NewPool(20, 20, 2, gpool.WithIsBlocking(false),
+	var p = gpool.NewPool(1000, 1000, 2, gpool.WithIsBlocking(false),
 		gpool.WithIsPreAllocation(true))
-	//times := 50000
-	times := 5000
+	times := 50000
+	//times := 5000
 	for i := 0; i < 1; i++ {
 		p.Reboot()
 		startTime := time.Now()
