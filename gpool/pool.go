@@ -124,27 +124,12 @@ func (p *pool) init() {
 	if p.opts.panicHandler == nil {
 		p.opts.panicHandler = defaultPanicHandler
 	}
-}
 
-// cleanStopWorker
-func (p *pool) cleanStopWorker() {
-	// NewTimer(d) (*Timer) 创建一个 Timer，内部维护了一个 chan Time 类型的 C 字段，它会在过去时间段 d 后，向其自身的 C 字段发送当时的时间，只有一次触发机会
-	// NewTicker 返回一个新的 Ticker，该 Ticker 内部维护了一个 chan Time 类型的 C 字段，并会每隔时间段 d 就向该通道发送当时的时间。即有多次触发机会
-	ticker := time.NewTicker(p.opts.cleanTime)
-	// 注意停止该 ticker
-	defer ticker.Stop()
-	// 坑点：这里是为了随机数处理，用来初始化随机变量，如果没有初始化，那么 rand.Intn() 得到的都是固定的值，而非一个随机值
-	rand.Seed(time.Now().UnixNano())
-	for range ticker.C {
-		if p.IsClosed() {
-			return
+	if p.opts.isPreAllocation {
+		if p.opts.allocationNum <= 0 || p.opts.allocationNum > p.coreSize {
+			p.opts.allocationNum = p.coreSize
 		}
-		// 每次随机扫描 len/4 个随机位置的 worker，如果过期了那么进行移除
-		l := int(p.workers.len)
-		for i := 0; i < l/4; i++ {
-			idx := rand.Intn(l)
-			p.workers.checkWorker(int32(idx))
-		}
+		p.preAllocate()
 	}
 }
 
@@ -260,7 +245,34 @@ func (p *pool) Reboot() {
 	}
 }
 
-// ---------------------------------------------------------------------------------------------------
+// preAllocate 预创建 worker
+func (p *pool) preAllocate() {
+	for i := 0; i < int(p.opts.allocationNum); i++ {
+		p.newWorker(nil)
+	}
+}
+
+// cleanStopWorker
+func (p *pool) cleanStopWorker() {
+	// NewTimer(d) (*Timer) 创建一个 Timer，内部维护了一个 chan Time 类型的 C 字段，它会在过去时间段 d 后，向其自身的 C 字段发送当时的时间，只有一次触发机会
+	// NewTicker 返回一个新的 Ticker，该 Ticker 内部维护了一个 chan Time 类型的 C 字段，并会每隔时间段 d 就向该通道发送当时的时间。即有多次触发机会
+	ticker := time.NewTicker(p.opts.cleanTime)
+	// 注意停止该 ticker
+	defer ticker.Stop()
+	// 坑点：这里是为了随机数处理，用来初始化随机变量，如果没有初始化，那么 rand.Intn() 得到的都是固定的值，而非一个随机值
+	rand.Seed(time.Now().UnixNano())
+	for range ticker.C {
+		if p.IsClosed() {
+			return
+		}
+		// 每次随机扫描 len/4 个随机位置的 worker，如果过期了那么进行移除
+		l := int(p.workers.len)
+		for i := 0; i < l/4; i++ {
+			idx := rand.Intn(l)
+			p.workers.checkWorker(int32(idx))
+		}
+	}
+}
 
 // newLocker 获取一把锁
 func newLocker() sync.Locker {
@@ -317,12 +329,7 @@ func (p *pool) getWorker(isFull isFullFunc, task taskFunc) (w *worker) {
 	}
 
 	// 创建一个新的 worker
-	w = NewWorker(p, task)
-	p.addWorker(w)
-	// 让 worker 先开始运行等待任务
-	w.run()
-	// runningSize+1，表示当前存在的 worker 数+1
-	p.incrRunning(1)
+	w = p.newWorker(task)
 	// 这里不能将 worker 入队，因为 workers 内部的 worker 存储的是空闲等待任务的，而这里新创建的是需要去执行任务的
 	return w
 }
@@ -387,4 +394,15 @@ func (p *pool) blockWait(task taskFunc) bool {
 	// 阻塞数-1
 	p.blockSize--
 	return true
+}
+
+// newWorker 创建一个新的 worker
+func (p *pool) newWorker(task taskFunc) *worker {
+	w := NewWorker(p, task)
+	p.addWorker(w)
+	// 让 worker 先开始运行等待任务
+	w.run()
+	// runningSize+1，表示当前存在的 worker 数+1
+	p.incrRunning(1)
+	return w
 }

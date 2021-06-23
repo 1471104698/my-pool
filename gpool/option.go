@@ -30,14 +30,17 @@ type Option func(*Options)
 type Options struct {
 	// workers 清理周期
 	cleanTime time.Duration
+
 	// 是否预创建 worker
 	isPreAllocation bool
 	// 预创建的 worker 数
 	allocationNum int32
+
 	// panic 处理策略
 	panicHandler PanicHandler
 	// 拒绝策略
 	rejectHandler RejectHandler
+
 	// 当任务来临而没有 worker 可以创建，同时任务队列已满的时候是否阻塞当前 goroutine 等待出现空闲的 worker
 	isBlocking bool
 	// 最大的阻塞 goroutine 数
