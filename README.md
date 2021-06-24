@@ -10,7 +10,17 @@
 
 那么 Go 呢？goroutine 使用的是 两级线程模型，N：M 的对应关系，并不是每个 goroutine 都需要创建一个 OS 线程的，因此开销较小，同时 goroutine 本身就非常轻量级，每个 goroutine 初始的栈大小只有 2KB，并且会动态扩容/收缩，按照 GO 开发者的话 go 是能够支持成千上万的 goroutine 的
 
-emmmm，平时也很少接触到这种并发量，按我本人来讲目前就实习了几个月左右，写的也只是一些几乎没什么并发量的业务代码，pool 没有什么实际的作用，因此这里实现的 pool 实际上并没有太大的作用，不过是想要来学习一些 GO 相关的一些知识，**学完用了才会印象深刻**。。。
+emmmm，平时也很少接触到高并发，按我本人来讲目前就实习了几个月左右，写的也只是一些几乎没什么并发量的业务代码，没有 pool  的应用场景
+
+
+
+做该 pool 的动机：
+
+```go
+在看 GMP 调度模型的时候，看到一篇文章讲完 GMP 后说实现一个 goroutine pool，看到我本身也是有兴趣的
+因此打算根据它的部分设计思路+自身学习 Java ThreadPool 的源码逻辑，并且 goroutine pool 是比较考验和运用并发知识的
+因此个人认为尝试着手动实现一个 goroutine pool 对我个人而言的能力提升也会是比较明显的
+```
 
 
 
@@ -748,11 +758,13 @@ pool 关闭需要做以下几件事：
 
 4、清空 workers 队列：将每个 worker 的状态设置为 stop，已经获取到任务或者正在执行会继续执行，执行完成后会自动退出，空闲的 worker 超时等待完成后会退出，将 workers 清空
 
-5、lock.Unlock() 释放锁
+5、关闭 chan
+
+6、lock.Unlock() 释放锁
 
 
 
-## 实现过程中的设计思路、遇到的问题、解决思路
+## 实现过程中的设计思路
 
 
 
@@ -986,7 +998,10 @@ getTask() 获取的任务有两种情况：
 
 对于第一种情况，worker 执行任务没有什么问题，因为它此时是不存在于 workers 队列的，即表示它不是一个空闲 worker，那么在任务执行期间 Submit() 后面是不可能再拿到这个 worker 了，因此没问题。
 
-对于第二种情况，worker 执行的任务不是由 Submit() 提交过来的，而是 worker 自己去找的，并且可以看出它在拿到任务后也没有执行从 workers 中脱离的代码，这也就意味着 worker 在执行这个任务的时候，它仍然是在 workers 队列中的，那么下次 Submit() 是有可能把它当作空闲 worker，然后将任务提交给它，而此时它有任务在执行，那么此时 Submit() 就会阻塞住了
+对于第二种情况，worker 执行的任务不是由 Submit() 提交过来的，而是 worker 自己去找的，
+并且可以看出它在拿到任务后也没有执行从 workers 中脱离的代码，
+这也就意味着 worker 在执行这个任务的时候，它仍然是在 workers 队列中的，
+那么下次 Submit() 是有可能把它当作空闲 worker，然后将任务提交给它，而此时它有任务在执行，那么此时 Submit() 就会阻塞住了
 ```
 
 2、**发生 chan 方面的 deadlock**
@@ -1259,27 +1274,27 @@ Submit() 的逻辑不变，只需要修改 blockWait() 的逻辑：
 ```go
 // blockWait
 func (p *pool) blockWait(task taskFunc) bool {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-	p.blockSize++
+    p.lock.Lock()
+    defer p.lock.Unlock()
+    p.blockSize++
     // 计算超时结束时间
-	endTime := time.Now().Add(p.opts.blockingTime)
+    endTime := time.Now().Add(p.opts.blockingTime)
     // 生产者-消费者模型
-	for !p.enTaskQueue(task) && p.IsRunning() {
+    for !p.enTaskQueue(task) && p.IsRunning() {
         // 计算剩下的超时时间
-		remaining := endTime.Sub(time.Now())
+        remaining := endTime.Sub(time.Now())
         // 剩余时间 < 0，超时退出
-		if remaining < 0 {
-			return false
-		}
+        if remaining < 0 {
+            return false
+        }
         // select 两个 case，一个接收唤醒信号，一个用于超时限制
-		select {
-		case <- p.ch:
-		case <- time.After(remaining):
-		}
-	}
-	p.blockSize--
-	return true
+        select {
+        case <- p.ch:
+        case <- time.After(remaining):
+        }
+    }
+    p.blockSize--
+    return true
 }
 ```
 
@@ -1332,3 +1347,30 @@ worker run() 执行逻辑如下：
 目前超时等待的做法就想到这里
 
 当 pool Close() 时不需要去管 Submit() 阻塞的 goroutine，当到达超时时间自动唤醒发现 pool 已经关闭时它们会自动退出
+
+
+
+
+
+## 遇到的问题、解决思路
+
+###  1、workers 队列不能去限制容量 cap
+
+问题：
+
+```go
+在代码中最开始我将 workers 的容量设置为 maxSize，想着最多可以存储 maxSize 个 worker，但是实际上这是存在问题的
+因为对于 stop worker 并不是立马就清除的，而是使用一个 clean goroutine 去执行，这样的话就会导致 实际正在运行的 worker 数小于 maxSize
+因为 stop worker 在没有被清理前，在 Submit() 的视角里所有正在运行的 worker 数是小于 maxSize 的
+因此它可以一个新的 worker，创建完成后它会将该 worker 存放到 workers 队列中
+此时如果 stop worker + running worker 占满了整个队列，那么将会导致这一步阻塞，大大降低了执行效率
+```
+
+解决：
+
+```go
+因此，现在默认将 workers 队列的 cap 设置为 math.MaxInt32（不提前进行分配）
+因为 workers 跟任务队列不同，它本身就不应该存在 worker 数限制，限制逻辑需要由 pool 自己去实现。
+不过这实际上使得 workers 里面大部分的逻辑就变得空洞，比如 isFull()，目前仍做保留
+```
+

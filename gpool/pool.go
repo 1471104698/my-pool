@@ -183,17 +183,6 @@ func (p *pool) Submit(task taskFunc) error {
 	return nil
 }
 
-// handlePanic
-func (p *pool) handlePanic() {
-	if err := recover(); err != nil {
-		if h := p.opts.panicHandler; h != nil {
-			h(err.(error))
-		} else {
-			panic(err)
-		}
-	}
-}
-
 // IsRunning pool 是否正在运行
 func (p *pool) IsRunning() bool {
 	return atomic.LoadInt32(&p.status) <= Running
@@ -275,6 +264,17 @@ func (p *pool) Reboot() {
 func (p *pool) preAllocate() {
 	for i := 0; i < int(p.opts.allocationNum); i++ {
 		p.newWorker(nil)
+	}
+}
+
+// handlePanic
+func (p *pool) handlePanic() {
+	if err := recover(); err != nil {
+		if h := p.opts.panicHandler; h != nil {
+			h(err.(error))
+		} else {
+			panic(err)
+		}
 	}
 }
 
