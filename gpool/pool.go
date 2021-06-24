@@ -253,6 +253,10 @@ func (p *pool) Close() {
 	p.workers.reset()
 	// 清空任务队列的任务
 	p.taskQueue.reset()
+	// 关闭 chan
+	if p.opts.isBlocking {
+		close(p.ch)
+	}
 }
 
 // Reboot 重启被关闭的 pool
@@ -261,6 +265,9 @@ func (p *pool) Reboot() {
 	// 因此为了避免启动多余的线程，这里使用 CAS，如果修改成功，那么由当前 goroutine 去开启 clean goroutine，失败的话表示已经有其他的 goroutine 开启了
 	if atomic.CompareAndSwapInt32(&p.status, Closed, Running) {
 		go p.cleanStopWorker()
+		if p.opts.isBlocking {
+			p.ch = make(chan struct{}, p.opts.blockMaxNum)
+		}
 	}
 }
 
@@ -308,9 +315,14 @@ func (p *pool) isCoreFull() bool {
 	return p.RunningSize() >= p.coreSize
 }
 
-// incrRunning runningSize+1
+// incrRunning runningSize+i
 func (p *pool) incrRunning(i int32) {
 	atomic.AddInt32(&p.runningSize, i)
+}
+
+// decrRunning runningSize-i
+func (p *pool) decrRunning(i int32) {
+	atomic.AddInt32(&p.runningSize, -i)
 }
 
 // isNeedBlocking 判断当前 Submit() goroutine 是否需要阻塞
@@ -399,7 +411,7 @@ func (p *pool) blockWait(task taskFunc) bool {
 		// 获取剩余超时时间
 		remaining := endTime.Sub(time.Now())
 		// 没有剩余超时时间，直接返回
-		if remaining < 0 {
+		if remaining <= 0 {
 			// 阻塞数-1
 			p.blockSize--
 			return false

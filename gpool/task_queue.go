@@ -86,6 +86,7 @@ func (q *taskQueue) PollWithTimeout(timeout int32, duration time.Duration) (task
 		select {
 		case <-q.ch:
 		case <-time.After(remaining):
+			//fmt.Println("超时")
 		}
 	}
 	return nil

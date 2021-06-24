@@ -44,9 +44,9 @@ func (w *worker) run() {
 				// 如果当前 worker 需要回收，那么结束运行
 				if w.isRecycle() {
 					w.setStatus(WorkerStop)
+					w.p.decrRunning(1)
 					return
 				}
-
 			} else {
 				// 执行任务
 				t()
@@ -125,7 +125,7 @@ func (w *worker) IsStop() bool {
 
 // signal 唤醒 Submit 等待的 goroutine
 func (w *worker) signal() {
-	if w.p.opts.isBlocking {
+	if w.p.opts.isBlocking && w.p.IsRunning() {
 		select {
 		case w.p.ch <- struct{}{}:
 		case <-time.After(time.Nanosecond):

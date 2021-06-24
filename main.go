@@ -3,27 +3,28 @@ package main
 import (
 	"fmt"
 	"gpool/gpool"
+	"net/http"
+	"net/http/pprof"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-var sum int32
-
-func add(i int32) {
+func add(sum *int32, i int32) {
 	time.Sleep(100 * time.Millisecond)
-	atomic.AddInt32(&sum, i)
+	atomic.AddInt32(sum, i)
 }
 
-var wg sync.WaitGroup
-
 func main() {
-	wg = sync.WaitGroup{}
+	var sum int32
+	wg := sync.WaitGroup{}
 
-	var p = gpool.NewPool(100, 100, 2, gpool.WithIsBlocking(false),
+	go seeStack()
+
+	var p = gpool.NewPool(1000, 1000, 2, gpool.WithIsBlocking(false),
 		gpool.WithIsPreAllocation(true))
-	times := 50000
-	//times := 5000
+	times := 3000
+	//times := 50000
 	for i := 0; i < 1; i++ {
 		p.Reboot()
 		startTime := time.Now()
@@ -33,14 +34,13 @@ func main() {
 			i := i
 			p.Submit(func() {
 				fmt.Println(i)
-				add(int32(i))
+				add(&sum, int32(i))
 				wg.Done()
 			})
 		}
-		fmt.Println("wait...")
 		wg.Wait()
 		fmt.Println("耗时：", time.Now().Sub(startTime))
-
+		p.Close()
 		except := getSum(times)
 		fmt.Println("预期 sum 值：", except)
 		fmt.Println("实际 sum 值:", sum)
@@ -56,4 +56,15 @@ func getSum(j int) int32 {
 		sum += int32(i)
 	}
 	return sum
+}
+
+const (
+	pprofAddr string = ":7890"
+)
+
+func seeStack() {
+	pprofHandler := http.NewServeMux()
+	pprofHandler.Handle("/debug/pprof/", http.HandlerFunc(pprof.Index))
+	server := &http.Server{Addr: pprofAddr, Handler: pprofHandler}
+	go server.ListenAndServe()
 }
