@@ -2,6 +2,7 @@ package gpool
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,8 @@ const (
 	DefaultCoreSize = 1000
 	// DefaultCleanStopWorkerTime 清理无效 worker 时间周期
 	DefaultCleanStopWorkerTime = time.Second
+	// worker 默认空闲时间
+	DefaultFreeTime = 2
 
 	// DefaultBlockingTime 默认最大的 Submit() 阻塞 goroutine 时长
 	DefaultBlockingTime = 10 * time.Nanosecond
@@ -49,7 +52,7 @@ type pool struct {
 	runningSize int32
 	// pool 状态
 	status int32
-	// worker 最大空闲时间
+	// worker 空闲时间，单位为 time.Nanosecond
 	freeTime int32
 	// 允许阻塞的 Submit() 数
 	blockSize int32
@@ -83,7 +86,7 @@ func NewPool(core, max, freeTime int32, opts ...Option) *pool {
 		lock:        lock,
 		cond:        sync.NewCond(lock),
 		opts:        setOptions(opts),
-		workers:     NewWorkers(max),
+		workers:     NewWorkers(math.MaxInt32),
 		taskQueue:   NewTaskQueue(-1),
 	}
 	p.init()
@@ -94,16 +97,23 @@ func NewPool(core, max, freeTime int32, opts ...Option) *pool {
 
 // init 初始化 pool 参数
 func (p *pool) init() {
+	// 设置 maxSize
 	if p.maxSize < 0 {
 		p.maxSize = DefaultMaxSize
 	}
+	// 设置 coreSize
 	if p.coreSize < 0 {
 		p.coreSize = DefaultCoreSize
 	}
+	// 维护 core 和 max 的关系
 	if p.coreSize > p.maxSize {
 		p.coreSize = p.maxSize
 	}
-
+	// 设置 freeTime
+	if p.freeTime <= 0 {
+		p.freeTime = DefaultFreeTime
+	}
+	// 设置 blocking 相关参数
 	if p.opts.isBlocking {
 		if p.opts.blockingTime <= 0 {
 			p.opts.blockingTime = DefaultBlockingTime
@@ -113,18 +123,19 @@ func (p *pool) init() {
 		}
 		p.ch = make(chan struct{}, p.opts.blockMaxNum)
 	}
-
+	// 设置 cleanTime
 	if p.opts.cleanTime <= 0 {
 		p.opts.cleanTime = DefaultCleanStopWorkerTime
 	}
-
+	// 设置拒绝策略
 	if p.opts.rejectHandler == nil {
 		p.opts.rejectHandler = defaultRejectHandler
 	}
+	// 设置 panic 处理器
 	if p.opts.panicHandler == nil {
 		p.opts.panicHandler = defaultPanicHandler
 	}
-
+	// 预分配处理
 	if p.opts.isPreAllocation {
 		if p.opts.allocationNum <= 0 || p.opts.allocationNum > p.coreSize {
 			p.opts.allocationNum = p.coreSize
@@ -148,6 +159,7 @@ func (p *pool) Submit(task taskFunc) error {
 		if !p.enTaskQueue(task) {
 			// 任务队列已满，那么创建 非 core worker
 			w = p.getWorker(p.isMaxFull, task)
+			// 创建失败
 			if w == nil {
 				// 阻塞等待并存储到队列中
 				if p.isNeedBlocking() && p.blockWait(task) {
@@ -161,6 +173,7 @@ func (p *pool) Submit(task taskFunc) error {
 				return poolFullErr
 			}
 		}
+		// 成功放入任务队列，直接返回
 		return nil
 	}
 
@@ -231,7 +244,7 @@ func (p *pool) SetMaxSize(maxSize int32) {
 
 // Close 关闭 pool
 func (p *pool) Close() {
-	// 获取锁，使得其他 goroutine 无法创建新的 worker
+	// 获取锁，保证并发安全，使得其他 goroutine 无法创建新的 worker
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	// 设置 pool 为 关闭状态

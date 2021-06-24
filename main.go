@@ -11,6 +11,7 @@ import (
 var sum int32
 
 func add(i int32) {
+	time.Sleep(100 * time.Millisecond)
 	atomic.AddInt32(&sum, i)
 }
 
@@ -19,7 +20,7 @@ var wg sync.WaitGroup
 func main() {
 	wg = sync.WaitGroup{}
 
-	var p = gpool.NewPool(1000, 1000, 2, gpool.WithIsBlocking(false),
+	var p = gpool.NewPool(100, 100, 2, gpool.WithIsBlocking(false),
 		gpool.WithIsPreAllocation(true))
 	times := 50000
 	//times := 5000
@@ -31,21 +32,20 @@ func main() {
 			wg.Add(1)
 			i := i
 			p.Submit(func() {
-				fmt.Println("run with：", i)
+				fmt.Println(i)
 				add(int32(i))
 				wg.Done()
 			})
 		}
+		fmt.Println("wait...")
 		wg.Wait()
 		fmt.Println("耗时：", time.Now().Sub(startTime))
 
-		p.Close()
-		fmt.Println("运行的线程数：", p.RunningSize())
-		fmt.Println("最大线程数：", p.MaxSize())
-		fmt.Println("预期 sum 值：", getSum(times))
+		except := getSum(times)
+		fmt.Println("预期 sum 值：", except)
 		fmt.Println("实际 sum 值:", sum)
-		if sum != getSum(times) {
-			panic(fmt.Errorf("the final result is wrong!!!, expect:%v, actually:%v", sum, getSum(times)))
+		if sum != except {
+			panic(fmt.Errorf("expect:%v, actually:%v", sum, except))
 		}
 	}
 }

@@ -12,6 +12,9 @@ var (
 	emptyErr = fmt.Errorf("queue is empty")
 )
 
+/*
+	workers 不应该限制容量
+*/
 // workers
 type workers struct {
 	// 容量
@@ -43,7 +46,7 @@ func NewWorkers(cap int32) (ws *workers) {
 		// producer 和 consumer 同一把锁
 		producer: sync.NewCond(lock),
 		consumer: sync.NewCond(lock),
-		workers:  make([]*worker, 0, cap),
+		workers:  make([]*worker, 0),
 	}
 }
 
