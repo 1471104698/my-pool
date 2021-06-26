@@ -3,7 +3,6 @@ package gpool
 import (
 	"fmt"
 	"sync/atomic"
-	"time"
 )
 
 // worker 状态
@@ -18,6 +17,13 @@ const (
 	WorkerWithQueue = iota
 	WorkerWithChan
 )
+
+// chan 关闭异常处理
+var chanClosePanicHandler = func() {
+	if err := recover(); err != nil {
+		fmt.Println("ch is closed")
+	}
+}
 
 // Worker worker 接口
 type Worker interface {
@@ -36,8 +42,16 @@ type Worker interface {
 // worker 抽取封装的公共 worker
 type worker struct {
 	Worker
-	p      *pool
+	p      GoroutinePool
 	status int32
+}
+
+// newWorker
+func newWorker(p GoroutinePool) *worker {
+	return &worker{
+		p:      p,
+		status: WorkerRunning,
+	}
 }
 
 // run 执行任务
@@ -96,13 +110,10 @@ type workerWithQueue struct {
 func (w *workerWithQueue) Close() {}
 
 // newWorkerWithQueue 创建一个 worker queue
-func newWorkerWithQueue(p *pool, task TaskFunc) *workerWithQueue {
+func newWorkerWithQueue(p GoroutinePool, task TaskFunc) *workerWithQueue {
 	return &workerWithQueue{
-		worker: &worker{
-			p:      p,
-			status: WorkerRunning,
-		},
-		task: task,
+		worker: newWorker(p),
+		task:   task,
 	}
 }
 
@@ -118,7 +129,7 @@ func (w *workerWithQueue) getTask() (t TaskFunc) {
 		return nil
 	}
 	// 尝试从任务队列中获取任务
-	t = w.p.deTaskQueueTimeout(w.p.freeTime)
+	t = w.p.deTaskQueueTimeout()
 	if t != nil {
 		return t
 	}
@@ -168,11 +179,11 @@ func (w *workerWithQueue) isNeedStop() bool {
 
 // signal 唤醒 Submit 等待的 goroutine
 func (w *workerWithQueue) signal() {
-	if w.p.opts.isBlocking && w.p.IsRunning() {
-		select {
-		case w.p.ch <- struct{}{}:
-		case <-time.After(time.Nanosecond):
-		}
+	// 处理 chan 已经关闭时产生的异常，因为这里 判断 IsRunning() 以及下面的操作并不是原子性的
+	// 所以可能前一时刻 IsRunning() return true，下一时刻 pool 已经关闭了 chan
+	defer chanClosePanicHandler()
+	if w.p.isBlocking() && w.p.IsRunning() {
+		w.p.signal()
 	}
 }
 
@@ -183,13 +194,10 @@ type workerWithChan struct {
 }
 
 // newWorkerWithChan 创建一个 worker chan
-func newWorkerWithChan(p *pool) *workerWithChan {
+func newWorkerWithChan(p GoroutinePool) *workerWithChan {
 	return &workerWithChan{
-		worker: &worker{
-			p:      p,
-			status: WorkerRunning,
-		},
-		task: make(chan TaskFunc),
+		worker: newWorker(p),
+		task:   make(chan TaskFunc),
 	}
 }
 
@@ -223,11 +231,7 @@ func (w *workerWithChan) needExit() bool {
 // notifyExit 通知退出逻辑，往 task 中传 nil，一旦读取到 nil，那么该 worker 会退出
 func (w *workerWithChan) notifyExit() {
 	// 处理 ch 已经关闭导致的 panic
-	defer func() {
-		if err := recover(); err != nil {
-			fmt.Println("worker ch is close")
-		}
-	}()
+	defer chanClosePanicHandler()
 	w.setStatus(WorkerStop)
 	w.task <- nil
 }
@@ -236,4 +240,6 @@ func (w *workerWithChan) notifyExit() {
 func (w *workerWithChan) doAfter() {
 	//将 worker 添加到 workers 队列中，继续等待获取任务
 	w.p.addWorker(w)
+	// 唤醒在等待的 Submit goroutine
+	w.p.signal()
 }
