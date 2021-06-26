@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	// DefaultMaxSize pool 默认容量
+	// DefaultMaxSize Pool 默认容量
 	DefaultMaxSize = 2000
-	// DefaultCoreSize pool 默认容量
+	// DefaultCoreSize Pool 默认容量
 	DefaultCoreSize = 1000
 	// DefaultCleanStopWorkerTime 清理无效 worker 时间周期
 	DefaultCleanStopWorkerTime = time.Second
@@ -25,11 +25,11 @@ const (
 	DefaultMaxBlockNum = 1000
 )
 
-// pool 的状态
+// Pool 的状态
 const (
-	// pool 正在运行
+	// Pool 正在运行
 	Running = iota
-	// pool 已经关闭
+	// Pool 已经关闭
 	Closed
 )
 
@@ -39,18 +39,21 @@ var (
 	poolFullErr   = fmt.Errorf("pool is full")
 )
 
+// TaskFunc 任务类型
+type TaskFunc = func()
+
 // isFullFunc
 type isFullFunc = func() bool
 
-// pool
-type pool struct {
+// Pool
+type Pool struct {
 	// 最大 worker 数
 	maxSize int32
 	// core worker 数
 	coreSize int32
 	// 正在运行的 worker 数
 	runningSize int32
-	// pool 状态
+	// Pool 状态
 	status int32
 	// worker 空闲时间，单位为 time.Nanosecond
 	freeTime int32
@@ -59,25 +62,25 @@ type pool struct {
 
 	// 全局锁
 	lock sync.Locker
-	// 用于控制 pool 的阻塞和等待，目前尚未使用
+	// 用于控制 Pool 的阻塞和等待，目前尚未使用
 	cond *sync.Cond
 
 	// 控制 Submit() 唤醒
 	ch chan struct{}
 
 	// 这里实际上应该将 workers 做成一个接口，这样可以接收不同实现的任务队列
-	workers *workers
+	workers PoolWorkers
 	// 任务队列
 	taskQueue *taskQueue
 
-	// pool 可选参数
+	// Pool 可选参数
 	opts *Options
 }
 
-// NewPool 创建一个 pool
-func NewPool(core, max, freeTime int32, opts ...Option) *pool {
+// NewPool 创建一个 Pool
+func NewPool(core, max, freeTime int32, opts ...Option) *Pool {
 	lock := newLocker()
-	p := &pool{
+	p := &Pool{
 		maxSize:     max,
 		coreSize:    core,
 		freeTime:    freeTime,
@@ -86,17 +89,18 @@ func NewPool(core, max, freeTime int32, opts ...Option) *pool {
 		lock:        lock,
 		cond:        sync.NewCond(lock),
 		opts:        setOptions(opts),
-		workers:     NewWorkers(math.MaxInt32),
+		workers:     NewPoolWorkers(WorkerQueue, math.MaxInt32),
 		taskQueue:   NewTaskQueue(-1),
 	}
+	p.taskQueue.p = p
 	p.init()
 	// 开启一个线程定时清除 无效 worker
 	go p.cleanStopWorker()
 	return p
 }
 
-// init 初始化 pool 参数
-func (p *pool) init() {
+// init 初始化 Pool 参数
+func (p *Pool) init() {
 	// 设置 maxSize
 	if p.maxSize < 0 {
 		p.maxSize = DefaultMaxSize
@@ -145,34 +149,31 @@ func (p *pool) init() {
 }
 
 // Submit 任务提交
-func (p *pool) Submit(task taskFunc) error {
-	// 判断 pool 是否已经关闭
+func (p *Pool) Submit(task TaskFunc) error {
+	// 判断 Pool 是否已经关闭
 	if p.IsClosed() {
 		return poolClosedErr
 	}
 
-	// 获取 worker 来执行任务
-	w := p.getWorker(p.isCoreFull, task)
-	// worker 数量达到了 core
-	if w == nil {
-		// 将任务放到任务队列中
-		if !p.enTaskQueue(task) {
-			// 任务队列已满，那么创建 非 core worker
-			w = p.getWorker(p.isMaxFull, task)
-			// 创建失败
-			if w == nil {
-				// 阻塞等待并存储到队列中
-				if p.isNeedBlocking() && p.blockWait(task) {
-					return nil
-				}
-				// 执行拒绝策略
-				if r := p.opts.rejectHandler; r != nil {
-					return r(task)
-				}
-				// 没有拒绝策略，直接返回指定错误
-				return poolFullErr
+	// 尝试创建 core worker
+	if !p.getWorker(p.isCoreFull, task) {
+		// worker 数量达到了 core
+		// 尝试将将任务放到任务队列中
+		//if !p.enTaskQueue(task) {
+		// 任务队列已满，尝试创建 非 core worker
+		if !p.getWorker(p.isMaxFull, task) {
+			// 创建失败，判断是否需要阻塞等待
+			if p.isNeedBlocking() && p.blockWait(task) {
+				return nil
 			}
+			// 执行拒绝策略
+			if r := p.opts.rejectHandler; r != nil {
+				return r(task)
+			}
+			// 没有拒绝策略，直接返回指定错误
+			return poolFullErr
 		}
+		//}
 		// 成功放入任务队列，直接返回
 		return nil
 	}
@@ -183,39 +184,39 @@ func (p *pool) Submit(task taskFunc) error {
 	return nil
 }
 
-// IsRunning pool 是否正在运行
-func (p *pool) IsRunning() bool {
+// IsRunning Pool 是否正在运行
+func (p *Pool) IsRunning() bool {
 	return atomic.LoadInt32(&p.status) <= Running
 }
 
-// IsClosed pool 是否已经关闭
-func (p *pool) IsClosed() bool {
+// IsClosed Pool 是否已经关闭
+func (p *Pool) IsClosed() bool {
 	// atomic.LoadInt32() 原子性的获取某个值
 	return atomic.LoadInt32(&p.status) >= Closed
 }
 
 // RunningSize 获取已经存在的 worker 数
-func (p *pool) RunningSize() int32 {
+func (p *Pool) RunningSize() int32 {
 	return atomic.LoadInt32(&p.runningSize)
 }
 
 // MaxSize 获取最大 worker 数
-func (p *pool) MaxSize() int32 {
+func (p *Pool) MaxSize() int32 {
 	return atomic.LoadInt32(&p.maxSize)
 }
 
 // CoreSize 获取最大 core worker 数
-func (p *pool) CoreSize() int32 {
+func (p *Pool) CoreSize() int32 {
 	return atomic.LoadInt32(&p.coreSize)
 }
 
 // BlockSize 获取 Submit() 阻塞 goroutine 数
-func (p *pool) BlockSize() int32 {
+func (p *Pool) BlockSize() int32 {
 	return atomic.LoadInt32(&p.blockSize)
 }
 
 // SetCoreSize 动态设置 core worker 数
-func (p *pool) SetCoreSize(coreSize int32) {
+func (p *Pool) SetCoreSize(coreSize int32) {
 	// 这里并不需要使用 CAS，多个 goroutine 同时设置最终也会有一个确定的值
 	if coreSize > p.MaxSize() {
 		return
@@ -224,21 +225,21 @@ func (p *pool) SetCoreSize(coreSize int32) {
 }
 
 // SetMaxSize 动态设置 max worker 数
-func (p *pool) SetMaxSize(maxSize int32) {
+func (p *Pool) SetMaxSize(maxSize int32) {
 	if maxSize < p.CoreSize() {
 		return
 	}
 	atomic.StoreInt32(&p.maxSize, maxSize)
 }
 
-// Close 关闭 pool
-func (p *pool) Close() {
+// Close 关闭 Pool
+func (p *Pool) Close() {
 	// 获取锁，保证并发安全，使得其他 goroutine 无法创建新的 worker
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	// 设置 pool 为 关闭状态
+	// 设置 Pool 为 关闭状态
 	p.setStatus(Closed)
-	// 扫描所有的 workers 中所有的 worker，对于不在这里的 worker 在执行完任务后会自动退出
+	// 扫描所有的 WorkersQueue 中所有的 worker，对于不在这里的 worker 在执行完任务后会自动退出
 	p.workers.reset()
 	// 清空任务队列的任务
 	p.taskQueue.reset()
@@ -248,10 +249,11 @@ func (p *pool) Close() {
 	}
 }
 
-// Reboot 重启被关闭的 pool
-func (p *pool) Reboot() {
+// Reboot 重启被关闭的 Pool
+func (p *Pool) Reboot() {
 	// 因为这里可能存在 goroutine 同时修改状态，而我们需要启动一个清除 stop worker 的 goroutine
-	// 因此为了避免启动多余的线程，这里使用 CAS，如果修改成功，那么由当前 goroutine 去开启 clean goroutine，失败的话表示已经有其他的 goroutine 开启了
+	// 因此为了避免启动多余的 goroutine 以及多次初始化 ch
+	// 使用 CAS，如果修改成功，那么由当前 goroutine 去开启 clean goroutine 以及关闭 ch ，失败的话表示已经有其他的 goroutine 开启了
 	if atomic.CompareAndSwapInt32(&p.status, Closed, Running) {
 		go p.cleanStopWorker()
 		if p.opts.isBlocking {
@@ -261,14 +263,14 @@ func (p *pool) Reboot() {
 }
 
 // preAllocate 预创建 worker
-func (p *pool) preAllocate() {
+func (p *Pool) preAllocate() {
 	for i := 0; i < int(p.opts.allocationNum); i++ {
-		p.newWorker(nil)
+		p.newWorkerWithQueue(nil)
 	}
 }
 
 // handlePanic
-func (p *pool) handlePanic() {
+func (p *Pool) handlePanic() {
 	if err := recover(); err != nil {
 		if h := p.opts.panicHandler; h != nil {
 			h(err.(error))
@@ -279,7 +281,7 @@ func (p *pool) handlePanic() {
 }
 
 // cleanStopWorker
-func (p *pool) cleanStopWorker() {
+func (p *Pool) cleanStopWorker() {
 	// NewTimer(d) (*Timer) 创建一个 Timer，内部维护了一个 chan Time 类型的 C 字段，它会在过去时间段 d 后，向其自身的 C 字段发送当时的时间，只有一次触发机会
 	// NewTicker 返回一个新的 Ticker，该 Ticker 内部维护了一个 chan Time 类型的 C 字段，并会每隔时间段 d 就向该通道发送当时的时间。即有多次触发机会
 	ticker := time.NewTicker(p.opts.cleanTime)
@@ -292,7 +294,7 @@ func (p *pool) cleanStopWorker() {
 			return
 		}
 		// 每次随机扫描 len/4 个随机位置的 worker，如果过期了那么进行移除
-		l := int(p.workers.len)
+		l := int(p.workers.Len())
 		for i := 0; i < l/4; i++ {
 			idx := rand.Intn(l)
 			p.workers.checkWorker(int32(idx))
@@ -306,91 +308,100 @@ func newLocker() sync.Locker {
 }
 
 // isMaxFull 判断是否已经存在 maxSize 个 worker
-func (p *pool) isMaxFull() bool {
+func (p *Pool) isMaxFull() bool {
 	return p.RunningSize() >= p.maxSize
 }
 
 // isCoreFull 判断是否已经存在 coreSize 个 worker
-func (p *pool) isCoreFull() bool {
+func (p *Pool) isCoreFull() bool {
 	return p.RunningSize() >= p.coreSize
 }
 
 // incrRunning runningSize+i
-func (p *pool) incrRunning(i int32) {
+func (p *Pool) incrRunning(i int32) {
 	atomic.AddInt32(&p.runningSize, i)
 }
 
 // decrRunning runningSize-i
-func (p *pool) decrRunning(i int32) {
+func (p *Pool) decrRunning(i int32) {
 	atomic.AddInt32(&p.runningSize, -i)
 }
 
 // isNeedBlocking 判断当前 Submit() goroutine 是否需要阻塞
-func (p *pool) isNeedBlocking() bool {
+func (p *Pool) isNeedBlocking() bool {
 	return p.opts.isBlocking && p.BlockSize() < p.opts.blockMaxNum
 }
 
-// setStatus 设置 pool 状态
-func (p *pool) setStatus(status int32) {
+// setStatus 设置 Pool 状态
+func (p *Pool) setStatus(status int32) {
 	atomic.StoreInt32(&p.status, status)
 }
 
 // getWorker 获取 workder 的逻辑
-func (p *pool) getWorker(isFull isFullFunc, task taskFunc) (w *worker) {
-	// 这里由 workers 自己保证并发安全
-	//w, _ = p.workers.Remove()
+func (p *Pool) getWorker(isFull isFullFunc, task TaskFunc) bool {
+	// 这里由 WorkersQueue 自己保证并发安全
+	//w, _ = p.WorkersQueue.Remove()
 	//if w != nil {
 	//	return w
 	//}
 
 	// 这里需要加锁，因为 isFullFunc() 的判断虽然是原子性的，但是它跟下面的创建 worker 的操作合在一起并不是原子性的
-	// 比如当前 pool 还有一个空余位置，同时来了两个 goroutine
+	// 比如当前 Pool 还有一个空余位置，同时来了两个 goroutine
 	// isFullFunc() 的判断是原子性的，此时的判断不涉及到 worker 添加，因此对于这两个 goroutine 来说返回的就是 false
 	// 那么它们都会同时执行下面的创建 worker 的逻辑，导致创建的 worker 数超过了限制范围
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
 	if p.IsClosed() {
-		return nil
+		return false
 	}
-
 	// 当前是否能够创建新的 worker
 	if isFull() {
-		return nil
+		return false
 	}
-
-	// 创建一个新的 worker
-	w = p.newWorker(task)
-	// 这里不能将 worker 入队，因为 workers 内部的 worker 存储的是空闲等待任务的，而这里新创建的是需要去执行任务的
-	return w
+	// 创建一个新的 worker，并将任务交给该 worker
+	// 这里不能将 worker 入队，因为 WorkersQueue 内部的 worker 存储的是空闲等待任务的，而这里新创建的是需要去执行任务的
+	p.newWorkerWithQueue(task)
+	return true
 }
 
-// addWorker 添加 worker 到 workers 队列
-func (p *pool) addWorker(w *worker) {
+// addWorker 添加 worker 到 WorkersQueue 队列
+func (p *Pool) addWorker(w Worker) {
 	if p.IsClosed() || w.IsStop() {
 		return
 	}
 	p.workers.Put(w)
 }
 
+// newWorkerWithQueue 创建一个新的 WorkerWithQueue 类型的 worker
+func (p *Pool) newWorkerWithQueue(task TaskFunc) {
+	// 让 worker 先开始运行等待任务
+	w := newWorkerWithQueue(p, task)
+	w.run(w)
+	p.addWorker(w)
+	// runningSize+1，表示当前存在的 worker 数+1
+	p.incrRunning(1)
+}
+
 // enTaskQueue 将任务存储到任务队列
-func (p *pool) enTaskQueue(task taskFunc) bool {
+func (p *Pool) enTaskQueue(task TaskFunc) bool {
 	if p.IsClosed() {
 		return false
 	}
 	return p.taskQueue.Add(task)
 }
 
-// enTaskQueue 从任务队列中取任务，超时等待
-func (p *pool) deTaskQueueTimeout(timeout int32) (task taskFunc) {
+// deTaskQueueTimeout 从任务队列中取任务，超时等待
+func (p *Pool) deTaskQueueTimeout(timeout int32) (task TaskFunc) {
 	if p.IsClosed() {
 		return nil
 	}
+	// 超时获取任务
 	return p.taskQueue.PollWithTimeout(timeout, time.Nanosecond)
 }
 
-// deTaskQueue 从任务队列中取任务
-func (p *pool) deTaskQueue() (task taskFunc) {
+// deTaskQueue 从任务队列中取任务，拿不到直接返回 nil
+func (p *Pool) deTaskQueue() (task TaskFunc) {
 	if p.IsClosed() {
 		return nil
 	}
@@ -398,7 +409,7 @@ func (p *pool) deTaskQueue() (task taskFunc) {
 }
 
 // blockWait 阻塞 Submit() goroutine，直到超时或者任务提交到任务队列成功
-func (p *pool) blockWait(task taskFunc) bool {
+func (p *Pool) blockWait(task TaskFunc) bool {
 	// 加锁
 	p.lock.Lock()
 	defer p.lock.Unlock()
@@ -406,7 +417,7 @@ func (p *pool) blockWait(task taskFunc) bool {
 	p.blockSize++
 	// 计算超时到期时间
 	endTime := time.Now().Add(p.opts.blockingTime)
-	// 生产者-消费者，任务入队失败并且 pool 还没有关闭，那么进行阻塞
+	// 生产者-消费者，任务入队失败并且 Pool 还没有关闭，那么进行阻塞
 	for !p.enTaskQueue(task) && p.IsRunning() {
 		// 获取剩余超时时间
 		remaining := endTime.Sub(time.Now())
@@ -425,15 +436,4 @@ func (p *pool) blockWait(task taskFunc) bool {
 	// 阻塞数-1
 	p.blockSize--
 	return true
-}
-
-// newWorker 创建一个新的 worker
-func (p *pool) newWorker(task taskFunc) *worker {
-	w := NewWorker(p, task)
-	p.addWorker(w)
-	// 让 worker 先开始运行等待任务
-	w.run()
-	// runningSize+1，表示当前存在的 worker 数+1
-	p.incrRunning(1)
-	return w
 }

@@ -13,7 +13,7 @@ func add(i int32) {
 
 // TestWorkers
 func TestWorkers(t *testing.T) {
-	//ws := NewWorkers(10)
+	//ws := NewWorkersQueue(10)
 	//wg := sync.WaitGroup{}
 	//
 	//times := 1000

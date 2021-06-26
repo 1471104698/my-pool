@@ -1,22 +1,12 @@
 package gpool
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 )
 
-// 常用错误
-var (
-	fullErr  = fmt.Errorf("queue is full")
-	emptyErr = fmt.Errorf("queue is empty")
-)
-
-/*
-	workers 不应该限制容量
-*/
-// workers
-type workers struct {
+// WorkersQueue
+type WorkersQueue struct {
 	// 容量
 	cap int32
 	// 元素个数
@@ -30,28 +20,28 @@ type workers struct {
 	consumer *sync.Cond
 
 	// worker 容器
-	workers []*worker
+	workers []Worker
 }
 
-// NewWorkers 创建一个 workers
-func NewWorkers(cap int32) (ws *workers) {
+// NewWorkersQueue 创建一个 WorkersQueue
+func NewWorkersQueue(cap int32) (ws *WorkersQueue) {
 	if cap <= 0 {
-		return nil
+		cap = DefaultWorkerCap
 	}
 	lock := newLocker()
-	return &workers{
+	return &WorkersQueue{
 		cap:  cap,
 		len:  0,
 		lock: lock,
 		// producer 和 consumer 同一把锁
 		producer: sync.NewCond(lock),
 		consumer: sync.NewCond(lock),
-		workers:  make([]*worker, 0),
+		workers:  make([]Worker, 0),
 	}
 }
 
 // Add 添加，满了返回错误
-func (ws *workers) Add(w *worker) error {
+func (ws *WorkersQueue) Add(w Worker) error {
 	if ws.Offer(w) {
 		return fullErr
 	}
@@ -59,7 +49,7 @@ func (ws *workers) Add(w *worker) error {
 }
 
 // Remove 移除，空的返回错误
-func (ws *workers) Remove() (w *worker, err error) {
+func (ws *WorkersQueue) Remove() (w Worker, err error) {
 	if w = ws.Poll(); w == nil {
 		return nil, emptyErr
 	}
@@ -67,7 +57,7 @@ func (ws *workers) Remove() (w *worker, err error) {
 }
 
 // Offer 添加，满了返回 false
-func (ws *workers) Offer(w *worker) bool {
+func (ws *WorkersQueue) Offer(w Worker) bool {
 	if w == nil {
 		return true
 	}
@@ -83,7 +73,7 @@ func (ws *workers) Offer(w *worker) bool {
 }
 
 // Poll 移除，空的返回 nil
-func (ws *workers) Poll() (w *worker) {
+func (ws *WorkersQueue) Poll() (w Worker) {
 	ws.lock.Lock()
 	defer ws.lock.Unlock()
 
@@ -94,7 +84,7 @@ func (ws *workers) Poll() (w *worker) {
 }
 
 // Put 添加，满了阻塞等待
-func (ws *workers) Put(w *worker) {
+func (ws *WorkersQueue) Put(w Worker) {
 	if w == nil {
 		return
 	}
@@ -109,7 +99,7 @@ func (ws *workers) Put(w *worker) {
 }
 
 // Take 移除，空的阻塞等待
-func (ws *workers) Take() (w *worker) {
+func (ws *WorkersQueue) Take() (w Worker) {
 	ws.lock.Lock()
 	defer ws.lock.Unlock()
 
@@ -120,8 +110,28 @@ func (ws *workers) Take() (w *worker) {
 	return ws.dequeue()
 }
 
+// IsFull 判断队列是否已满
+func (ws *WorkersQueue) IsFull() bool {
+	return ws.Len() == ws.cap
+}
+
+// IsEmpty 判断队列是否为空
+func (ws *WorkersQueue) IsEmpty() bool {
+	return ws.Len() == 0
+}
+
+// Len 获取元素个数
+func (ws *WorkersQueue) Len() int32 {
+	return atomic.LoadInt32(&ws.len)
+}
+
+// Cap 获取容量
+func (ws *WorkersQueue) Cap() int32 {
+	return ws.cap
+}
+
 // enqueue 将 w 入队，调用该方法的都是已经获取锁的
-func (ws *workers) enqueue(w *worker) {
+func (ws *WorkersQueue) enqueue(w Worker) {
 	ws.workers = append(ws.workers, w)
 	ws.len++
 	// 唤醒一个消费者消费
@@ -129,7 +139,7 @@ func (ws *workers) enqueue(w *worker) {
 }
 
 // dequeue 将 w 出队，调用该方法的都是已经获取锁的
-func (ws *workers) dequeue() (w *worker) {
+func (ws *WorkersQueue) dequeue() (w Worker) {
 	l := ws.len
 	w = ws.workers[l-1]
 	// 帮助 GC 回收
@@ -142,7 +152,7 @@ func (ws *workers) dequeue() (w *worker) {
 }
 
 // checkWorker 检查 worker 是否正在运行，如果已经停止运行，那么将它移除
-func (ws *workers) checkWorker(i int32) {
+func (ws *WorkersQueue) checkWorker(i int32) {
 	ws.lock.Lock()
 	defer ws.lock.Unlock()
 	if i >= ws.len || i < 0 {
@@ -155,18 +165,8 @@ func (ws *workers) checkWorker(i int32) {
 	}
 }
 
-// IsFull 判断队列是否已满
-func (ws *workers) IsFull() bool {
-	return atomic.LoadInt32(&ws.len) == ws.cap
-}
-
-// IsEmpty 判断队列是否为空
-func (ws *workers) IsEmpty() bool {
-	return atomic.LoadInt32(&ws.len) == 0
-}
-
-// reset 重置 workers 队列，清空所有的 worker，初始化状态
-func (ws *workers) reset() {
+// reset 重置 WorkersQueue 队列，清空所有的 worker，初始化状态
+func (ws *WorkersQueue) reset() {
 	for k, w := range ws.workers {
 		w.setStatus(WorkerStop)
 		ws.workers[k] = nil

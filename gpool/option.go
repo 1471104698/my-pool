@@ -14,7 +14,7 @@ type PanicHandler = func(err interface{})
 var (
 	// 默认的 Panic 处理策略
 	defaultPanicHandler = func(err interface{}) {
-		fmt.Printf("发生 panic err: %v\n", err)
+		panic(err)
 	}
 	// 默认的拒绝策略
 	defaultRejectHandler = func(task func()) (err error) {
@@ -26,9 +26,9 @@ var (
 // Option
 type Option func(*Options)
 
-// Options pool 可选参数
+// Options Pool 可选参数
 type Options struct {
-	// workers 清理周期
+	// WorkersQueue 清理周期
 	cleanTime time.Duration
 
 	// 是否预创建 worker

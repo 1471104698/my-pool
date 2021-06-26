@@ -13,30 +13,32 @@ import (
 func add(sum *int32, i int32) {
 	time.Sleep(100 * time.Millisecond)
 	atomic.AddInt32(sum, i)
+	fmt.Println(i)
+	wg.Done()
 }
+
+var wg = sync.WaitGroup{}
 
 func main() {
 	var sum int32
-	wg := sync.WaitGroup{}
 
 	go seeStack()
 
-	var p = gpool.NewPool(1000, 1000, 2, gpool.WithIsBlocking(false),
-		gpool.WithIsPreAllocation(true))
-	times := 3000
-	//times := 50000
+	var p = gpool.NewPool(1, 10000, 2, gpool.WithIsBlocking(false),
+		gpool.WithIsPreAllocation(false))
+	//times := 3000
+	times := 10000
 	for i := 0; i < 1; i++ {
 		p.Reboot()
 		startTime := time.Now()
 		sum = 0
 		for i := 0; i < times; i++ {
 			wg.Add(1)
-			i := i
-			p.Submit(func() {
-				fmt.Println(i)
-				add(&sum, int32(i))
-				wg.Done()
-			})
+			func(i int) {
+				p.Submit(func() {
+					add(&sum, int32(i))
+				})
+			}(i)
 		}
 		wg.Wait()
 		fmt.Println("耗时：", time.Now().Sub(startTime))
