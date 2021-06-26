@@ -168,7 +168,8 @@ func (ws *WorkersQueue) checkWorker(i int32) {
 // reset 重置 WorkersQueue 队列，清空所有的 worker，初始化状态
 func (ws *WorkersQueue) reset() {
 	for k, w := range ws.workers {
-		w.setStatus(WorkerStop)
+		// 通知退出
+		w.notifyExit()
 		ws.workers[k] = nil
 	}
 	ws.len = 0
