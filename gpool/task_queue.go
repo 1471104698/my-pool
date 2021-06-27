@@ -30,8 +30,6 @@ type taskQueue struct {
 
 	// 存储任务的容器
 	tasks []TaskFunc
-
-	p *Pool
 }
 
 // NewTaskQueue 创建一个任务队列
@@ -85,7 +83,6 @@ func (q *taskQueue) PollWithTimeout(timeout int32, duration time.Duration) (task
 		select {
 		case <-q.ch:
 		case <-time.After(remaining):
-			//fmt.Printf("runningSize：%v\n", q.p.RunningSize())
 		}
 	}
 	return nil

@@ -11,9 +11,9 @@ import (
 
 const (
 	// DefaultMaxSize pool 默认 max 容量
-	DefaultMaxSize = 2000
+	DefaultMaxSize = 1000
 	// DefaultCoreSize pool 默认 core 容量
-	DefaultCoreSize = 1000
+	DefaultCoreSize = 500
 	// DefaultCleanStopWorkerTime 清理无效 worker 时间周期
 	DefaultCleanStopWorkerTime = time.Second
 	// DefaultFreeTime worker 默认空闲时间
@@ -47,33 +47,33 @@ type isFullFunc = func() bool
 
 //  GoroutinePool
 type GoroutinePool interface {
-	Submit(task TaskFunc) error                                // 提交任务
-	Close()                                                    // 关闭 pool
-	IsRunning() bool                                           // 判断 pool 是否运行中
-	IsClosed() bool                                            // 判断 pool 是否已经关闭
-	Reboot()                                                   // 重启 pool
-	block(task TaskFunc) bool                                  // 阻塞 Submit goroutine
-	signal()                                                   // 唤醒等待的 Submit goroutine
-	RunningSize() int32                                        // 获取已经存在的 worker 数
-	MaxSize() int32                                            // 获取最大 worker 数
-	CoreSize() int32                                           // 获取最大 core worker 数
-	BlockSize() int32                                          // 获取 Submit 阻塞 goroutine 数
-	SetCoreSize(coreSize int32)                                // 动态设置 core worker 数
-	SetMaxSize(maxSize int32)                                  // 动态设置 max worker 数
-	isMaxFull() bool                                           // 判断是否已经存在 maxSize 个 worker
-	isCoreFull() bool                                          // 判断是否已经存在 coreSize 个 worker
-	incrRunning(i int32)                                       // runningSize+i
-	decrRunning(i int32)                                       // runningSize-i
-	isBlocking() bool                                          // 是否开启了阻塞
-	isNeedBlocking() bool                                      // 判断当前 Submit goroutine 是否需要阻塞
-	setStatus(status int32)                                    // 设置 pool 状态
-	preAllocate()                                              // 预创建 worker 逻辑
-	handlePanic()                                              // panic 处理逻辑
-	addWorker(t Worker)                                        // 添加 worker 到 workers
-	getWorker(isFull isFullFunc, task TaskFunc) (Worker, bool) // 获取 worker
-	enTaskQueue(task TaskFunc) bool                            // 任务入队
-	deTaskQueue() (task TaskFunc)                              // 任务获取
-	deTaskQueueTimeout() (task TaskFunc)                       // 任务超时获取
+	Submit(p GoroutinePool, task TaskFunc) error // 任务提交
+	Do(task TaskFunc) bool                       // 每个 pool 任务处理逻辑
+	Close()                                      // 关闭 pool
+	IsRunning() bool                             // 判断 pool 是否运行中
+	IsClosed() bool                              // 判断 pool 是否已经关闭
+	Reboot()                                     // 重启 pool
+	signal()                                     // 唤醒等待的 Submit goroutine
+	RunningSize() int32                          // 获取已经存在的 worker 数
+	MaxSize() int32                              // 获取最大 worker 数
+	CoreSize() int32                             // 获取最大 core worker 数
+	BlockSize() int32                            // 获取 Submit 阻塞 goroutine 数
+	SetCoreSize(coreSize int32)                  // 动态设置 core worker 数
+	SetMaxSize(maxSize int32)                    // 动态设置 max worker 数
+	isMaxFull() bool                             // 判断是否已经存在 maxSize 个 worker
+	isCoreFull() bool                            // 判断是否已经存在 coreSize 个 worker
+	incrRunning(i int32)                         // runningSize+i
+	decrRunning(i int32)                         // runningSize-i
+	isBlocking() bool                            // 是否开启了阻塞
+	isNeedBlocking() bool                        // 判断当前 Submit goroutine 是否需要阻塞
+	setStatus(status int32)                      // 设置 pool 状态
+	preAllocate(p1 GoroutinePool)                // 预创建 worker 逻辑
+	handlePanic()                                // panic 处理逻辑
+	handleReject(task TaskFunc) error            // 执行拒绝测试
+	addWorker(t Worker)                          // 添加 worker 到 workers
+	enTaskQueue(task TaskFunc) bool              // 任务入队
+	deTaskQueue() (task TaskFunc)                // 任务获取
+	deTaskQueueTimeout() (task TaskFunc)         // 任务超时获取
 }
 
 // pool
@@ -92,6 +92,9 @@ type pool struct {
 	freeTime int32
 	// 允许阻塞的 Submit 数
 	blockSize int32
+
+	// worker 类型
+	workerType int32
 
 	// 全局锁
 	lock sync.Locker
@@ -129,29 +132,31 @@ func newPool(core, max, freeTime int32, opts ...Option) *pool {
 }
 
 // NewPool1
-func NewPool1(core, max, freeTime int32, opts ...Option) *pool1 {
+func NewPool1(core, max, freeTime int32, opts ...Option) GoroutinePool {
 	p := &pool1{
 		pool: newPool(core, max, freeTime, opts...),
 	}
+	p.preAllocate(p)
+	p.pool.workerType = WorkerWithQueue
 	// 开启一个线程定时清除 无效 worker
 	go p.cleanStopWorker()
 	return p
 }
 
 // NewPool2
-func NewPool2(core, max, freeTime int32, opts ...Option) *pool2 {
+func NewPool2(core, max, freeTime int32, opts ...Option) GoroutinePool {
 	p := &pool2{
 		pool: newPool(core, max, freeTime, opts...),
 	}
-	p.cond = sync.NewCond(newLocker())
-
+	p.preAllocate(p)
+	p.pool.workerType = WorkerWithChan
 	return p
 }
 
 // init 初始化 pool 参数
 func (p *pool) init() {
 	// 设置 maxSize
-	if p.maxSize < 0 {
+	if p.maxSize <= 0 {
 		p.maxSize = DefaultMaxSize
 	}
 	// 设置 coreSize
@@ -193,8 +198,20 @@ func (p *pool) init() {
 		if p.opts.allocationNum <= 0 || p.opts.allocationNum > p.coreSize {
 			p.opts.allocationNum = p.coreSize
 		}
-		p.preAllocate()
 	}
+}
+
+// Submit 任务提交
+func (*pool) Submit(p GoroutinePool, task TaskFunc) error {
+	// 判断 pool 是否已经关闭
+	if p.IsClosed() {
+		return poolClosedErr
+	}
+	if !p.Do(task) {
+		// 执行拒绝策略
+		return p.handleReject(task)
+	}
+	return nil
 }
 
 // IsRunning pool 是否正在运行
@@ -285,10 +302,46 @@ func (p *pool) setStatus(status int32) {
 	atomic.StoreInt32(&p.status, status)
 }
 
+// giveTaskToWorker 将任务交给 worker 去处理
+func (p *pool) giveTaskToWorker(p1 GoroutinePool, isFull isFullFunc, task TaskFunc, getInWorkers bool) bool {
+	// 从 workers 中获取一个空闲 worker，这里由 workers 自己保证并发安全
+	var w Worker
+	if getInWorkers {
+		w, _ = p.workers.Remove()
+		if w != nil {
+			w.setTask(task)
+			return true
+		}
+	}
+	// 这里需要加锁，因为 isFullFunc() 的判断虽然是原子性的，但是它跟下面的创建 worker 的操作合在一起并不是原子性的
+	// 比如当前 pool 还有一个空余位置，同时来了两个 goroutine
+	// isFullFunc() 的判断是原子性的，此时的判断不涉及到 worker 添加，因此对于这两个 goroutine 来说返回的就是 false
+	// 那么它们都会同时执行下面的创建 worker 的逻辑，导致创建的 worker 数超过了限制范围
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	if p.IsClosed() {
+		return false
+	}
+	// 当前是否能够创建新的 worker
+	if isFull() {
+		return false
+	}
+	// 创建一个新的 worker，并将任务交给该 worker
+	w = p.newWorker(p1)
+	if w == nil {
+		return false
+	}
+	// 将任务交给 worekr
+	w.setTask(task)
+	p.incrRunning(1)
+	return true
+}
+
 // preAllocate 预创建 worker
-func (p *pool) preAllocate() {
+func (p *pool) preAllocate(p1 GoroutinePool) {
 	for i := 0; i < int(p.opts.allocationNum); i++ {
-		p.newWorkerWithQueue(p, nil)
+		p.newWorker(p1)
 	}
 }
 
@@ -303,6 +356,14 @@ func (p *pool) handlePanic() {
 	}
 }
 
+// handleReject 执行拒绝策略
+func (p *pool) handleReject(task TaskFunc) error {
+	if h := p.opts.rejectHandler; h != nil {
+		return h(task)
+	}
+	return poolFullErr
+}
+
 // addWorker 添加 worker 到 WorkersQueue 队列
 func (p *pool) addWorker(w Worker) {
 	if p.IsClosed() || w.IsStop() {
@@ -312,20 +373,21 @@ func (p *pool) addWorker(w Worker) {
 }
 
 // newWorkerWithQueue 创建一个新的 WorkerWithQueue 类型的 worker
-func (p *pool) newWorkerWithQueue(p1 GoroutinePool, task TaskFunc) Worker {
-	// 让 worker 先开始运行等待任务
-	w := newWorkerWithQueue(p1, task)
-	w.run(w)
-	p.addWorker(w)
-	return w
-}
+func (p *pool) newWorker(p1 GoroutinePool) Worker {
+	var w Worker
+	switch p.workerType {
+	case WorkerWithQueue:
+		w = newWorkerWithQueue(p1)
+		p.addWorker(w)
+	case WorkerWithChan:
+		w = newWorkerWithChan(p1)
+	default:
 
-// newWorkerWithChan 创建一个新的 WorkerWithChan 类型的 worker
-func (p *pool) newWorkerWithChan(p1 GoroutinePool) Worker {
-	// 让 worker 先开始运行等待任务
-	w := newWorkerWithChan(p1)
-	w.run(w)
-	// 当前 worker 不能添加进 workers，因为对于当前 worker 来说 workers 存储的是空闲的 worker
+	}
+	if w != nil {
+		// 让 worker 先开始运行等待任务
+		w.run(w)
+	}
 	return w
 }
 
@@ -359,61 +421,29 @@ type pool1 struct {
 	*pool
 }
 
-// Submit 任务提交
-func (p *pool1) Submit(task TaskFunc) error {
+// Do 任务处理逻辑
+func (p *pool1) Do(task TaskFunc) bool {
 	// 判断 pool 是否已经关闭
 	if p.IsClosed() {
-		return poolClosedErr
+		return false
 	}
 	// 尝试创建 core worker
-	if _, ok := p.getWorker(p.isCoreFull, task); !ok {
+	if !p.giveTaskToWorker(p, p.isCoreFull, task, false) {
 		// worker 数量达到了 core
 		// 尝试将将任务放到任务队列中
 		if !p.enTaskQueue(task) {
 			// 任务队列已满，尝试创建 非 core worker
-			if _, ok := p.getWorker(p.isMaxFull, task); !ok {
+			if !p.giveTaskToWorker(p, p.isMaxFull, task, false) {
 				// 创建失败，判断是否需要阻塞等待
-				if p.isNeedBlocking() && p.block(task) {
-					return nil
+				if p.isNeedBlocking() {
+					return p.block(task)
 				}
-				// 执行拒绝策略
-				if r := p.opts.rejectHandler; r != nil {
-					return r(task)
-				}
-				// 没有拒绝策略，直接返回指定错误
-				return poolFullErr
+				return false
 			}
 		}
-		// 成功放入任务队列，直接返回
-		return nil
+		return true
 	}
-
-	// 这里有个问题，当塞任务的时候可能 worker 已经结束运行了，导致 deadlock
-	// 这里拿到的 w 已经运行了 run()，直接塞任务即可
-	//w.task <- task
-	return nil
-}
-
-// getWorker 获取 workder 的逻辑
-func (p *pool1) getWorker(isFull isFullFunc, task TaskFunc) (Worker, bool) {
-	// 这里需要加锁，因为 isFullFunc() 的判断虽然是原子性的，但是它跟下面的创建 worker 的操作合在一起并不是原子性的
-	// 比如当前 pool 还有一个空余位置，同时来了两个 goroutine
-	// isFullFunc() 的判断是原子性的，此时的判断不涉及到 worker 添加，因此对于这两个 goroutine 来说返回的就是 false
-	// 那么它们都会同时执行下面的创建 worker 的逻辑，导致创建的 worker 数超过了限制范围
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	if p.IsClosed() {
-		return nil, false
-	}
-	// 当前是否能够创建新的 worker
-	if isFull() {
-		return nil, false
-	}
-	// 创建一个新的 worker，并将任务交给该 worker
-	w := p.newWorkerWithQueue(p, task)
-	p.incrRunning(1)
-	return w, true
+	return true
 }
 
 // block 阻塞 Submit goroutine，直到超时或者任务提交到任务队列成功
@@ -511,25 +541,22 @@ type pool2 struct {
 	*pool
 }
 
-// Submit 任务提交
-func (p *pool2) Submit(task TaskFunc) error {
-	// 判断 pool 是否已经关闭
-	if p.IsClosed() {
-		return poolClosedErr
-	}
+// Do 将任务交给 worker 或者 存放到任务队列中
+func (p *pool2) Do(task TaskFunc) bool {
 	// 尝试创建 worker
-	w, _ := p.getWorker(p.isMaxFull, nil)
-	if w == nil {
-		// 执行拒绝策略
-		if r := p.opts.rejectHandler; r != nil {
-			return r(task)
+	ok := p.giveTaskToWorker(p, p.isMaxFull, task, true)
+	if !ok {
+		if !p.isNeedBlocking() {
+			return false
 		}
-		// 没有拒绝策略，直接返回指定错误
-		return poolFullErr
+		for !ok {
+			// 阻塞，等待唤醒
+			p.block()
+			// 尝试获取 w
+			ok = p.giveTaskToWorker(p, p.isMaxFull, task, true)
+		}
 	}
-	// 这里拿到的 w 已经运行了 run()，直接塞任务即可
-	w.setTask(task)
-	return nil
+	return true
 }
 
 // Close 关闭 pool
@@ -550,45 +577,19 @@ func (p *pool2) Reboot() {
 	p.setStatus(Running)
 }
 
-// getWorker 获取 workder 的逻辑
-func (p *pool2) getWorker(isFull isFullFunc, task TaskFunc) (w Worker, ok bool) {
-	// 从 workers 中获取一个空闲 worker，这里由 workers 自己保证并发安全
-	w, _ = p.workers.Remove()
-	if w != nil {
-		return w, true
-	}
-	// 这里需要加锁，因为 isFullFunc() 的判断虽然是原子性的，但是它跟下面的创建 worker 的操作合在一起并不是原子性的
-	// 比如当前 pool 还有一个空余位置，同时来了两个 goroutine
-	// isFullFunc() 的判断是原子性的，此时的判断不涉及到 worker 添加，因此对于这两个 goroutine 来说返回的就是 false
-	// 那么它们都会同时执行下面的创建 worker 的逻辑，导致创建的 worker 数超过了限制范围
+// block 阻塞当前 Submit goroutine
+func (p *pool2) block() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-
-	if p.IsClosed() {
-		return nil, false
-	}
-	// 当前是否能够创建新的 worker
-	if isFull() {
-		return nil, false
-	}
-	// 创建一个新的 worker，并将任务交给该 worker
-	w = p.newWorkerWithChan(p)
-	p.incrRunning(1)
-	return w, true
-}
-
-// block 阻塞 Submit goroutine
-func (p *pool2) block(task TaskFunc) bool {
+	p.blockSize++
 	p.cond.Wait()
-	return true
+	p.blockSize--
 }
 
 // signal 唤醒 Submit 等待的 goroutine
 func (p *pool2) signal() {
-	select {
-	case p.ch <- struct{}{}:
-	case <-time.After(time.Nanosecond):
+	if p.IsClosed() {
+		return
 	}
+	p.cond.Signal()
 }
-
-//------------------------------------------------------------------------------------------------

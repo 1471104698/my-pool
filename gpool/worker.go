@@ -110,10 +110,9 @@ type workerWithQueue struct {
 func (w *workerWithQueue) Close() {}
 
 // newWorkerWithQueue 创建一个 worker queue
-func newWorkerWithQueue(p GoroutinePool, task TaskFunc) *workerWithQueue {
+func newWorkerWithQueue(p GoroutinePool) *workerWithQueue {
 	return &workerWithQueue{
 		worker: newWorker(p),
-		task:   task,
 	}
 }
 
@@ -138,6 +137,9 @@ func (w *workerWithQueue) getTask() (t TaskFunc) {
 
 // setTask 设置任务，pool 不关心怎么将任务交给 worker，由 worker 自己去决定
 func (w *workerWithQueue) setTask(t TaskFunc) {
+	if w.IsStop() {
+		return
+	}
 	w.task = t
 }
 
@@ -220,6 +222,9 @@ func (w *workerWithChan) getTask() TaskFunc {
 
 // setTask 设置任务，pool 不关心怎么将任务交给 worker，由 worker 自己去决定
 func (w *workerWithChan) setTask(t TaskFunc) {
+	if w.IsStop() {
+		return
+	}
 	w.task <- t
 }
 
